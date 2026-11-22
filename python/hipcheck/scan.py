@@ -1,12 +1,19 @@
-"""hipcheck 的判断逻辑（不依赖任何 UI，可在 hython 里直接跑）。
+"""hipcheck's check logic (no UI, runs directly in hython).
 
-对外两个函数：
+Two public functions:
 
-- :func:`check_hip` 扫描整个 hip 的路径问题，返回结果列表。每条包含
-  ``kind`` / ``node_path`` / ``parm_name`` / ``reason``。
-- :func:`scan_layer` 扫描指定网络层（v1 只支持 SOP），返回清理分组。
-  返回 dict：``{"supported": bool, "reason": str, "layer": str|None, "groups": [...]}``，
-  每个分组是 ``{"status": "floating" | "unused_branch", "node_paths": [...]}``。
+- :func:`check_hip` scans the whole hip for path problems and returns a list of
+  results. Each has ``kind`` / ``node_path`` / ``parm_name`` / ``reason`` /
+  ``ignored``.
+- :func:`scan_layer` scans one network layer (v1 only supports SOP) and returns
+  cleaning groups. The result is
+  ``{"supported": bool, "reason": str, "layer": str|None, "groups": [...]}``
+  where each group is
+  ``{"status": "floating" | "unused_branch", "node_paths": [...],
+  "ignored_paths": [...]}``.
+
+Nodes marked with :data:`IGNORE_KEY` user data are hidden by default; pass
+``include_ignored=True`` to get them back, flagged.
 """
 
 import glob
@@ -16,125 +23,88 @@ import re
 
 import hou
 
-#: 漂浮节点的上色颜色（紫）
-COLOR_FLOATING = (0.6, 0.25, 0.85)
-#: 没用分支的上色颜色（黄）
-COLOR_UNUSED_BRANCH = (1.0, 0.85, 0.1)
+#: Node userData key marking a node as ignored; value "1"
+IGNORE_KEY = "hipcheck_ignore"
 
 _ABS_RAW_RE = re.compile(r"^(?:[A-Za-z]:[\\/]|\\\\|//)")
 _OP_TOKEN_RE = re.compile(r"op:\s*[`\"']?([^\s`\"';,\)\]\}]+)")
 _REL_TOKEN_RE = re.compile(r"(?<![\w./])((?:\.\.?/)+[A-Za-z0-9_.$/-]+)")
 _ABS_TOKEN_RE = re.compile(r"/[A-Za-z0-9_.$/-]+")
 _WILDCARD_RE = re.compile(r"%0?\d*d|\$F\d*")
+#: A raw parm value with one of these is frame dependent (needs all frames).
+_FRAME_TOKEN_RE = re.compile(r"\$[{(]?[FT]|%0|`")
 
 
 # ---------------------------------------------------------------------------
-# 小工具
+# Helpers
 # ---------------------------------------------------------------------------
 
 def _as_node(value):
-    """把 hou.Node 或路径字符串统一成 hou.Node；找不到返回 None。"""
-    if value is None:
-        return None
+    """Turn a hou.Node or a path string into a hou.Node; None if not found."""
     if isinstance(value, hou.Node):
         return value
     if isinstance(value, str):
-        try:
-            return hou.node(value)
-        except Exception:
-            return None
+        return hou.node(value)
     return None
 
 
 def _all_nodes():
-    """整个 hip 里的所有节点（不含根节点）。"""
-    try:
-        return list(hou.node("/").allSubChildren())
-    except Exception:
-        return []
+    """Every node in the hip (root node excluded)."""
+    return list(hou.node("/").allSubChildren())
 
 
-def _safe_parm_template(parm):
-    try:
-        return parm.parmTemplate()
-    except Exception:
+def _is_ignored(node):
+    """Whether the node carries the hipcheck ignore mark."""
+    return node.userData(IGNORE_KEY) == "1"
+
+
+def _string_parm_type(parm):
+    """The hou.stringParmType of a string parm, None for other parm types."""
+    template = parm.parmTemplate()
+    if template.type() != hou.parmTemplateType.String:
         return None
-
-
-def _is_file_reference_parm(parm):
-    template = _safe_parm_template(parm)
-    if template is None or template.type() != hou.parmTemplateType.String:
-        return False
-    try:
-        return template.stringType() == hou.stringParmType.FileReference
-    except Exception:
-        return False
-
-
-def _is_node_reference_parm(parm):
-    template = _safe_parm_template(parm)
-    if template is None or template.type() != hou.parmTemplateType.String:
-        return False
-    try:
-        return template.stringType() in (
-            hou.stringParmType.NodeReference,
-            hou.stringParmType.NodeReferenceList,
-        )
-    except Exception:
-        return False
+    return template.stringType()
 
 
 def _is_manager_node(node):
-    """Manager 网络（/obj、/out、/stage、/tasks…）不是用户节点。
+    """Manager networks (/obj, /out, /stage, /tasks, ...) are not user nodes.
 
-    它们自带一些工具用的 FileReference 参数（比如 /stage 的
-    rendergallerysource 默认指向临时画廊库），检查时要跳过，避免误报。
+    They ship tool FileReference parms (for example /stage's
+    rendergallerysource defaults to a temporary gallery), so skipping them
+    avoids false positives.
     """
-    try:
-        return node.type().category().name() == "Manager"
-    except Exception:
-        return False
+    return node.type().category().name() == "Manager"
 
 
 def _type_base(node):
-    try:
-        name = node.type().name().lower()
-    except Exception:
-        return ""
-    return name.split("::", 1)[0]
-
-
-def _safe_flag(node, flag):
-    try:
-        return bool(node.isGenericFlagSet(flag))
-    except Exception:
-        return False
+    return node.type().name().lower().split("::", 1)[0]
 
 
 def _has_execute_button(node):
-    try:
-        parms = node.parms()
-    except Exception:
-        return False
-    for parm in parms:
+    for parm in node.parms():
         if parm.name() != "execute":
             continue
-        template = _safe_parm_template(parm)
-        if template is not None and template.type() == hou.parmTemplateType.Button:
+        if parm.parmTemplate().type() == hou.parmTemplateType.Button:
             return True
     return False
 
 
 def _is_write_node(node):
-    """是否是“会写文件”的节点（见 design.md 的终点定义）。"""
+    """Whether the node writes files (see the endpoint list in design.md).
+
+    Driver nodes (ROPs, wherever they live: /out, inside SOP/LOP/TOP networks)
+    write files; so do rop_* SOPs, File Cache and nodes with an execute button.
+    """
+    if node.type().category().name() == "Driver":
+        return True
     base = _type_base(node)
     return base.startswith("rop_") or "filecache" in base or _has_execute_button(node)
 
 
 def _node_reads_from_disk(node):
-    """写文件类节点是否处在“从磁盘读”的模式。
+    """Whether a file-writing node is in a "read from disk" mode.
 
-    非写文件节点恒为读。
+    Nodes that do not write files always read.
     """
     base = _type_base(node)
     if "filecache" in base:
@@ -145,41 +115,29 @@ def _node_reads_from_disk(node):
         if parm is None:
             return True
         return parm.evalAsString() in ("read", "auto")
-    if _is_write_node(node):
-        return False
-    return True
+    return not _is_write_node(node)
 
 
-def _parm_values(parm):
-    """当前帧、全局首帧、全局尾帧各求值一次，去重后返回（字符串）。"""
-    frames = []
-    try:
-        frames.append(float(hou.frame()))
-    except Exception:
-        pass
-    try:
-        first, last = hou.playbar.frameRange()
-        frames.extend([float(first), float(last)])
-    except Exception:
-        pass
-    if not frames:
-        frames = [1.0]
-
-    values = []
-    seen_frames = set()
+def _check_frames():
+    """Current frame plus the global start and end frame, unique."""
+    frames = [float(hou.frame())]
+    first, last = hou.playbar.frameRange()
+    frames.extend((float(first), float(last)))
+    unique = []
     for frame in frames:
-        key = round(frame, 6)
-        if key in seen_frames:
-            continue
-        seen_frames.add(key)
-        value = None
+        if frame not in unique:
+            unique.append(frame)
+    return unique
+
+
+def _parm_values(parm, raw, frames):
+    """Evaluate at every check frame when the raw text is frame dependent."""
+    values = []
+    for frame in (frames if _FRAME_TOKEN_RE.search(raw) else frames[:1]):
         try:
             value = parm.evalAtFrame(frame)
         except Exception:
-            try:
-                value = parm.eval()
-            except Exception:
-                value = None
+            value = None
         if value is None:
             continue
         value = str(value).strip()
@@ -189,10 +147,11 @@ def _parm_values(parm):
 
 
 def _resolve_path(path, bases=()):
-    """把路径尽力解析成节点。
+    """Resolve a path to a node as best as possible.
 
-    路径可能带着参数名（如 ``/obj/geo1/box1/tx``），逐级去掉末尾再试。
-    ``bases`` 里的基路径会依次与相对路径拼接。
+    The path may include a parm name (e.g. ``/obj/geo1/box1/tx``); trailing
+    components are dropped one by one. Each base in ``bases`` is prepended to
+    relative paths in turn.
     """
     if not path:
         return None
@@ -200,25 +159,18 @@ def _resolve_path(path, bases=()):
     if not path:
         return None
 
-    candidates = []
     if path.startswith("/"):
-        candidates.append(posixpath.normpath(path))
+        candidates = [posixpath.normpath(path)]
     else:
-        # 相对路径在不同上下文里语义略有差异（网络层 / 节点自身），全试一遍。
-        bases = list(bases) + ["/"]
-        for base in bases:
-            try:
-                candidates.append(posixpath.normpath(base + "/" + path))
-            except Exception:
-                continue
+        # Relative paths differ slightly by context (network layer vs. the node
+        # itself), so try them all.
+        candidates = [posixpath.normpath(base + "/" + path)
+                      for base in list(bases) + ["/"]]
 
     for candidate in candidates:
         current = candidate
         while current and current != "/":
-            try:
-                node = hou.node(current)
-            except Exception:
-                node = None
+            node = hou.node(current)
             if node is not None:
                 return node
             parent = posixpath.dirname(current)
@@ -229,128 +181,93 @@ def _resolve_path(path, bases=()):
 
 
 def _value_exists(value, node=None):
-    """判断读取路径是否真的存在（支持序列通配、op: 路径）。"""
+    """Whether a read path really exists (supports sequence wildcards, op: paths)."""
     value = value.strip()
     if not value:
         return True
 
-    lowered = value.lower()
-    if lowered.startswith("op:"):
+    if value.lower().startswith("op:"):
         target = value[3:].strip()
-        bases = []
-        if node is not None:
-            try:
-                bases = [node.path(), node.parent().path()]
-            except Exception:
-                bases = []
+        bases = [node.path(), node.parent().path()] if node is not None else []
         return _resolve_path(target, bases) is not None
 
-    try:
-        value = os.path.expanduser(os.path.expandvars(value))
-    except Exception:
-        pass
+    value = os.path.expanduser(os.path.expandvars(value))
     if "$" in value:
-        try:
-            value = hou.text.expandString(value)
-        except Exception:
-            pass
+        value = hou.text.expandString(value)
+
+    # Houdini resolves relative paths through its own search paths (built-in
+    # files such as the camera's defcam.bgeo), which cannot be reproduced
+    # reliably, so a relative path is never reported as missing.
+    if not os.path.isabs(value):
+        return True
 
     if any(ch in value for ch in "*?[") or _WILDCARD_RE.search(value):
-        pattern = _WILDCARD_RE.sub("*", value)
-        try:
-            return bool(glob.glob(pattern))
-        except Exception:
-            return False
-    try:
-        if os.path.exists(value):
-            return True
-    except Exception:
-        pass
-    # 相对路径（如 scatter 的 default.pic）Houdini 会去 HOUDINI_PATH 里找。
-    if not os.path.isabs(value):
-        try:
-            return hou.findFile(value) is not None
-        except Exception:
-            return False
-    return False
-
-
-def _token_matches_path(text, node_path):
-    pattern = re.escape(node_path) + r"(?![A-Za-z0-9_])"
-    try:
-        return re.search(pattern, text) is not None
-    except Exception:
-        return False
+        return bool(glob.glob(_WILDCARD_RE.sub("*", value)))
+    return os.path.exists(value)
 
 
 # ---------------------------------------------------------------------------
-# 检查：整个 hip 的路径问题
+# Check: path problems in the whole hip
 # ---------------------------------------------------------------------------
 
-def check_hip():
-    """扫描整个 hip，返回问题列表。
+def check_hip(include_ignored=False):
+    """Scan the whole hip and return a list of issues.
 
-    每条结果是 dict：``kind``（``broken_path`` / ``absolute_path``）、
-    ``node_path``、``parm_name``、``reason``，另带 ``value`` 方便 UI 展示。
+    Each entry is a dict: ``kind`` (``broken_path`` / ``absolute_path``),
+    ``node_path``, ``parm_name``, ``reason``, ``value``, and ``ignored``.
+    Issues on ignored nodes are dropped unless ``include_ignored`` is true.
     """
     results = []
+    frames = _check_frames()
     for node in _all_nodes():
-        if _is_manager_node(node):
+        if _is_manager_node(node) or node.isInsideLockedHDA():
             continue
-        # 锁住的 HDA 内部节点由 HDA 自己管，用户该看的是 HDA 本身的参数。
-        try:
-            if node.isInsideLockedHDA():
-                continue
-        except Exception:
-            pass
-        try:
-            parms = node.parms()
-        except Exception:
+        ignored = _is_ignored(node)
+        if ignored and not include_ignored:
             continue
-        for parm in parms:
-            if not _is_file_reference_parm(parm):
+        reads_from_disk = None  # computed once per node, only when needed
+        for parm in node.parms():
+            if _string_parm_type(parm) != hou.stringParmType.FileReference:
                 continue
-            # 界面上灰掉或隐藏的参数（功能没启用）不报。
-            try:
-                if parm.isDisabled() or parm.isHidden():
-                    continue
-                # 还是出厂默认值（如 scatter 的 default.pic）说明用户没设过，不报。
-                if parm.isAtDefault():
-                    continue
-            except Exception:
-                pass
+            # Grayed-out or hidden parms (feature not enabled) and factory
+            # defaults (e.g. scatter's default.pic) are not reported.
+            if parm.isDisabled() or parm.isHidden() or parm.isAtDefault():
+                continue
             try:
                 raw = parm.unexpandedString()
-            except Exception:
+            except hou.OperationFailed:
                 raw = ""
             raw = (raw or "").strip()
             if not raw:
                 continue
 
-            # 1) 写死的绝对路径：只看参数原文。
+            # 1) Hardcoded absolute path: the raw parm text only.
             if _ABS_RAW_RE.match(raw):
                 results.append({
                     "kind": "absolute_path",
                     "node_path": node.path(),
                     "parm_name": parm.name(),
-                    "reason": "写死的绝对路径: %s" % raw,
+                    "reason": "Hardcoded absolute path: %s "
+                              "(not relative to $HIP/$JOB)" % raw,
                     "value": raw,
+                    "ignored": ignored,
                 })
 
-            # 2) 路径断链：只查“读”的路径。
-            if not _node_reads_from_disk(node):
+            # 2) Broken path: only "read" paths are checked.
+            if reads_from_disk is None:
+                reads_from_disk = _node_reads_from_disk(node)
+            if not reads_from_disk:
                 continue
-            values = _parm_values(parm)
-            if not values:
-                continue
-            if any(_value_exists(value, node) for value in values):
+            values = _parm_values(parm, raw, frames)
+            if not values or any(_value_exists(value, node) for value in values):
                 continue
             results.append({
                 "kind": "broken_path",
                 "node_path": node.path(),
                 "parm_name": parm.name(),
-                "reason": "读取路径不存在: %s" % values[0],
+                "reason": "File not found: %s" % values[0],
                 "value": values[0],
+                "ignored": ignored,
             })
 
     results.sort(key=lambda r: (r["node_path"], r["parm_name"], r["kind"]))
@@ -358,7 +275,7 @@ def check_hip():
 
 
 # ---------------------------------------------------------------------------
-# 清理：当前层的分组
+# Clean: groups in the current layer
 # ---------------------------------------------------------------------------
 
 def _unsupported(network_node, reason):
@@ -371,144 +288,105 @@ def _unsupported(network_node, reason):
 
 
 def _is_self_or_inside(ref_path, target_path):
-    """ref 是 target 自己或在它里面（HDA 内部引用自己参数），不算外部引用。"""
+    """ref is target itself or inside it (an HDA referencing its own parms)."""
     return ref_path == target_path or ref_path.startswith(target_path + "/")
 
 
-def _collect_referenced_paths(layer, layer_nodes):
-    """在整个 hip 里找对 ``layer_nodes`` 的引用，返回被引用节点的路径集合。"""
+def _collect_referenced_paths(layer_nodes):
+    """Find references to ``layer_nodes`` in the whole hip; return their paths."""
     candidates = {node.path(): node for node in layer_nodes}
     referenced = set()
 
-    # 1) Houdini 自带依赖（ch() 等表达式、spare input、按名字引用等）。
-    #    dependents() 不含普通输入连线，正好是“输入之外”的依赖。
+    # 1) Houdini's own dependencies (ch() expressions, spare inputs, name
+    #    references, ...). dependents() excludes plain input wires, which is
+    #    exactly "anything besides inputs".
     for candidate in layer_nodes:
-        try:
-            dependents = candidate.dependents()
-        except Exception:
-            dependents = ()
-        for dependent in dependents:
-            try:
-                if not _is_self_or_inside(dependent.path(), candidate.path()):
-                    referenced.add(candidate.path())
+        candidate_path = candidate.path()
+        for dependent in candidate.dependents():
+            if not _is_self_or_inside(dependent.path(), candidate_path):
+                referenced.add(candidate_path)
+                break
+        if candidate_path in referenced:
+            continue
+        # parmsReferencingThis() catches some more expression forms.
+        for parm in candidate.parms():
+            for ref_parm in parm.parmsReferencingThis():
+                if not _is_self_or_inside(ref_parm.node().path(), candidate_path):
+                    referenced.add(candidate_path)
                     break
-            except Exception:
-                continue
-        if candidate.path() in referenced:
-            continue
-
-        # 再补一层 parmsReferencingThis()，有些版本对个别表达式写法更灵敏。
-        try:
-            parms = candidate.parms()
-        except Exception:
-            continue
-        for parm in parms:
-            try:
-                ref_parms = parm.parmsReferencingThis()
-            except Exception:
-                continue
-            for ref_parm in ref_parms:
-                try:
-                    ref_node = ref_parm.node()
-                    if not _is_self_or_inside(ref_node.path(), candidate.path()):
-                        referenced.add(candidate.path())
-                        break
-                except Exception:
-                    continue
-            if candidate.path() in referenced:
+            if candidate_path in referenced:
                 break
 
-    # 2) 字符串参数里写到的路径 / op: / 节点引用类参数。
-    for ref_node in _all_nodes():
-        try:
-            parms = ref_node.parms()
-        except Exception:
-            continue
-        for parm in parms:
-            # 节点引用类参数直接求值最可靠。
-            if _is_node_reference_parm(parm):
-                try:
-                    targets = parm.evalAsNodes()
-                except Exception:
-                    targets = ()
-                for target in targets:
-                    try:
-                        if (target.path() in candidates
-                                and not _is_self_or_inside(ref_node.path(), target.path())):
-                            referenced.add(target.path())
-                    except Exception:
-                        continue
+    # 2) Paths / op: mentions in string parms, and node-reference parms.
+    if not candidates:
+        return referenced
+    # One alternation instead of one search per candidate; longest paths first
+    # so a prefix never shadows a longer path.
+    path_re = re.compile("|".join(
+        re.escape(path) + r"(?![A-Za-z0-9_])"
+        for path in sorted(candidates, key=len, reverse=True)))
 
-            template = _safe_parm_template(parm)
-            if template is None or template.type() != hou.parmTemplateType.String:
+    for ref_node in _all_nodes():
+        if len(referenced) == len(candidates):
+            break
+        ref_path = ref_node.path()
+        for parm in ref_node.parms():
+            string_type = _string_parm_type(parm)
+            # Evaluating node-reference parms directly is most reliable.
+            if string_type in (hou.stringParmType.NodeReference,
+                               hou.stringParmType.NodeReferenceList):
+                for target in parm.evalAsNodes():
+                    target_path = target.path()
+                    if (target_path in candidates
+                            and not _is_self_or_inside(ref_path, target_path)):
+                        referenced.add(target_path)
+            if string_type is None:
                 continue
 
             try:
                 raw = parm.unexpandedString()
-            except Exception:
-                raw = ""
-            raw = raw or ""
+            except hou.OperationFailed:
+                continue
             if not raw:
                 continue
 
-            for path in list(candidates):
-                if _is_self_or_inside(ref_node.path(), path):
-                    continue
-                if _token_matches_path(raw, path):
+            for match in path_re.finditer(raw):
+                path = match.group(0)
+                if not _is_self_or_inside(ref_path, path):
                     referenced.add(path)
+            if len(referenced) == len(candidates):
+                break
 
-            bases = []
-            try:
-                bases.append(ref_node.path())
-                bases.append(ref_node.parent().path())
-            except Exception:
-                pass
-
-            tokens = []
-            for match in _OP_TOKEN_RE.finditer(raw):
-                tokens.append(match.group(1))
-            for match in _REL_TOKEN_RE.finditer(raw):
-                tokens.append(match.group(1))
-            for match in _ABS_TOKEN_RE.finditer(raw):
-                tokens.append(match.group(0))
-
+            bases = [ref_path, ref_node.parent().path()]
+            tokens = [m.group(1) for m in _OP_TOKEN_RE.finditer(raw)]
+            tokens += [m.group(1) for m in _REL_TOKEN_RE.finditer(raw)]
+            tokens += [m.group(0) for m in _ABS_TOKEN_RE.finditer(raw)]
             for token in tokens:
                 if not token or "$" in token:
                     continue
                 target = _resolve_path(token, bases)
                 if target is None:
                     continue
-                try:
-                    if (target.path() in candidates
-                            and not _is_self_or_inside(ref_node.path(), target.path())):
-                        referenced.add(target.path())
-                except Exception:
-                    continue
+                target_path = target.path()
+                if (target_path in candidates
+                        and not _is_self_or_inside(ref_path, target_path)):
+                    referenced.add(target_path)
 
     return referenced
 
 
 def _is_endpoint(node, referenced_paths):
-    if _safe_flag(node, hou.nodeFlag.Display):
-        return True
-    if _safe_flag(node, hou.nodeFlag.Render):
-        return True
-    if _safe_flag(node, hou.nodeFlag.Template):
-        return True
-    if _safe_flag(node, hou.nodeFlag.Footprint):
-        return True
+    for flag in (hou.nodeFlag.Display, hou.nodeFlag.Render,
+                 hou.nodeFlag.Template, hou.nodeFlag.Footprint,
+                 hou.nodeFlag.Lock, hou.nodeFlag.SoftLock):
+        if node.isGenericFlagSet(flag):
+            return True
     if node.name().lower().startswith("out"):
         return True
     if _is_write_node(node):
         return True
-    if (_safe_flag(node, hou.nodeFlag.Lock)
-            or _safe_flag(node, hou.nodeFlag.SoftLock)):
+    if node.comment().strip():
         return True
-    try:
-        if node.comment().strip():
-            return True
-    except Exception:
-        pass
     return node.path() in referenced_paths
 
 
@@ -530,44 +408,39 @@ class _UnionFind(object):
             self._parent[rb] = ra
 
 
-def scan_layer(network_node):
-    """扫描一层网络，返回清理分组；不支持的层返回明确原因。"""
+def scan_layer(network_node, include_ignored=False):
+    """Scan one network layer and return cleaning groups; unsupported layers explain why.
+
+    Ignore marks never change the analysis. After grouping, ignored node paths
+    are removed from ``node_paths`` (empty groups are dropped) unless
+    ``include_ignored`` is true; ``ignored_paths`` always holds the ignored
+    subset of the group's ``node_paths``.
+    """
     layer = _as_node(network_node)
     if layer is None:
-        return _unsupported(None, "找不到当前网络层（需要在网络编辑器里）")
+        return _unsupported(None, "Current network layer not found (open a network editor).")
 
-    try:
-        category = layer.type().category().name()
-    except Exception:
-        category = ""
-    try:
-        child_category = layer.type().childTypeCategory().name()
-    except Exception:
-        child_category = ""
-    # 网络编辑器停在 /obj/geo1 时，层自身的 category 是 Object，
-    # 真正的子网络类型要看 childTypeCategory()。
+    category = layer.type().category().name()
+    # The root is a Director node, whose childTypeCategory() is not available.
+    child_category = "" if category == "Director" else layer.type().childTypeCategory().name()
+    # When the network editor sits in /obj/geo1, the layer's own category is
+    # Object; the real child network type is childTypeCategory().
     if "Sop" not in (category, child_category):
         return _unsupported(
             layer,
-            "这一层不是 SOP 网络（%s），v1 只支持 SOP 网络的清理"
-            % (child_category or category or "未知"),
+            "This layer is not a SOP network (%s); v1 only cleans SOP networks."
+            % (child_category or category or "unknown"),
         )
 
-    try:
-        inside_locked = layer.isInsideLockedHDA()
-    except Exception:
-        inside_locked = False
-    if inside_locked:
-        return _unsupported(layer, "这一层在锁住的 HDA 里面，v1 不支持清理")
+    if layer.isInsideLockedHDA():
+        return _unsupported(
+            layer, "This layer is inside a locked HDA; v1 does not clean it.")
 
-    try:
-        layer_nodes = list(layer.children())
-    except Exception:
-        layer_nodes = []
-
-    # 网络 dot 不在 children() 里，node.inputs() 已经会透明穿过它。
+    # Network dots are not in children(), and node.inputs() already sees
+    # through them.
+    layer_nodes = list(layer.children())
     node_by_path = {node.path(): node for node in layer_nodes}
-    referenced_paths = _collect_referenced_paths(layer, layer_nodes)
+    referenced_paths = _collect_referenced_paths(layer_nodes)
 
     useful = set()
     stack = []
@@ -576,36 +449,25 @@ def scan_layer(network_node):
             useful.add(node.path())
             stack.append(node)
 
-    # 从终点沿输入连线往上游 BFS（Switch 没选中的输入、bypass 连线都算）。
+    # BFS upstream from the endpoints along input wires (including unselected
+    # Switch inputs and wires through bypassed nodes).
     while stack:
         node = stack.pop()
-        try:
-            inputs = node.inputs()
-        except Exception:
-            inputs = ()
-        for input_node in inputs:
+        for input_node in node.inputs():
             if input_node is None:
                 continue
             path = input_node.path()
-            if path not in node_by_path:
-                continue
-            if path in useful:
+            if path not in node_by_path or path in useful:
                 continue
             useful.add(path)
             stack.append(input_node)
 
-    remaining = [
-        node for node in layer_nodes if node.path() not in useful
-    ]
+    remaining = [node for node in layer_nodes if node.path() not in useful]
     remaining_paths = {node.path() for node in remaining}
 
     uf = _UnionFind(remaining_paths)
     for node in remaining:
-        try:
-            inputs = node.inputs()
-        except Exception:
-            inputs = ()
-        for input_node in inputs:
+        for input_node in node.inputs():
             if input_node is None:
                 continue
             in_path = input_node.path()
@@ -618,24 +480,19 @@ def scan_layer(network_node):
 
     result_groups = []
     for members in groups.values():
-        is_branch = False
-        for node in members:
-            try:
-                inputs = node.inputs()
-            except Exception:
-                inputs = ()
-            for input_node in inputs:
-                if input_node is None:
-                    continue
-                if input_node.path() in useful:
-                    is_branch = True
-                    break
-            if is_branch:
-                break
+        is_branch = any(
+            input_node is not None and input_node.path() in useful
+            for node in members for input_node in node.inputs())
+        ignored = {node.path() for node in members if _is_ignored(node)}
         paths = sorted(node.path() for node in members)
+        if not include_ignored:
+            paths = [path for path in paths if path not in ignored]
+            if not paths:
+                continue
         result_groups.append({
             "status": "unused_branch" if is_branch else "floating",
             "node_paths": paths,
+            "ignored_paths": [path for path in paths if path in ignored],
         })
 
     result_groups.sort(key=lambda group: group["node_paths"][0] if group["node_paths"] else "")

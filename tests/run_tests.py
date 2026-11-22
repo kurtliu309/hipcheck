@@ -1,9 +1,9 @@
-"""hipcheck 的 hython 测试。
+"""hython tests for hipcheck.
 
-运行：
+Run:
     "D:/Program Files/Side Effects Software/Houdini 21.0.512/bin/hython.exe" tests/run_tests.py
 
-最后一行是 ``ALL PASS n/n`` 或 ``FAIL k/n``。
+The last line is ``ALL PASS n/n`` or ``FAIL k/n``.
 """
 
 import os
@@ -11,7 +11,6 @@ import py_compile
 import shutil
 import sys
 import tempfile
-import time
 import traceback
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -26,7 +25,7 @@ _APP = None
 
 
 # ---------------------------------------------------------------------------
-# 场景小工具
+# Scene helpers
 # ---------------------------------------------------------------------------
 
 def _clear_flags(node):
@@ -50,8 +49,9 @@ def new_scene():
         pass
     geo = hou.node("/obj").createNode("geo", "geo1")
     _clear_flags(geo)
-    # SOP 网络至少得有一个显示节点，否则 Houdini 会自动把别的节点顶上去。
-    # 放一个没有输入的哨兵节点，让测试里要观察的节点可以真的“无 flag”。
+    # A SOP network needs at least one displayed node, otherwise Houdini
+    # promotes another node. This input-less sentinel lets the nodes under
+    # test really have no flags.
     geo.createNode("null", "out_display_sink", run_init_scripts=False)
     return geo
 
@@ -95,40 +95,43 @@ def close_color(a, b, tolerance=1e-4):
 
 
 # ---------------------------------------------------------------------------
-# 测试
+# Tests
 # ---------------------------------------------------------------------------
 
 def test_trunk():
-    """1. box→xform→OUT_null（OUT 不开显示 flag），终点按名字识别。"""
+    """1. box -> xform -> OUT_null (OUT has no display flag), endpoints by name."""
     geo = new_scene()
     box = mk(geo, "box", "box1")
     xform = mk(geo, "xform", "xform1", [box])
     out = mk(geo, "null", "OUT_main", [xform])
 
     result = scan.scan_layer(geo)
-    assert_true(result["supported"], "SOP 层应支持清理")
-    assert_equal(result["groups"], [], "主干节点不应出现在清理分组里")
+    assert_true(result["supported"], "a SOP layer should be supported")
+    assert_equal(result["groups"], [], "trunk nodes must not be in cleaning groups")
     for node in (box, xform, out):
-        assert_true(node.path() not in group_paths(result), "主干节点被误判")
+        assert_true(node.path() not in group_paths(result),
+                    "trunk node %s was wrongly flagged" % node.path())
 
 
 def test_floating_chain():
-    """2. 漂浮一串（头没有输入）→ floating，一组。"""
+    """2. A floating chain (head has no input) -> floating, one group."""
     geo = new_scene()
     head = mk(geo, "null", "float_head")
     mid = mk(geo, "xform", "float_mid", [head])
     tail = mk(geo, "null", "float_tail", [mid])
 
     result = scan.scan_layer(geo)
-    assert_equal(len(result["groups"]), 1, "漂浮链应合成一组")
+    assert_equal(len(result["groups"]), 1, "the floating chain should be one group")
     group = result["groups"][0]
-    assert_equal(group["status"], "floating", "无输入的整串应判为漂浮")
+    assert_equal(group["status"], "floating",
+                 "a chain without inputs should be floating")
     assert_equal(set(group["node_paths"]),
-                 {head.path(), mid.path(), tail.path()}, "漂浮组节点不对")
+                 {head.path(), mid.path(), tail.path()},
+                 "wrong nodes in the floating group")
 
 
 def test_unused_branch():
-    """3. 从主干接出来悬空的一串 → unused_branch。"""
+    """3. A dangling chain branching off the trunk -> unused_branch."""
     geo = new_scene()
     box = mk(geo, "box", "box1")
     xform = mk(geo, "xform", "xform1", [box])
@@ -137,16 +140,17 @@ def test_unused_branch():
     branch2 = mk(geo, "null", "branch2", [branch1])
 
     result = scan.scan_layer(geo)
-    assert_equal(len(result["groups"]), 1, "悬空分支应合成一组")
+    assert_equal(len(result["groups"]), 1, "the dangling branch should be one group")
     assert_equal(result["groups"][0]["status"], "unused_branch",
-                 "从主干接出来的一串应判为没用分支")
+                 "a chain branching off the trunk should be an unused branch")
     assert_equal(set(result["groups"][0]["node_paths"]),
-                 {branch1.path(), branch2.path()}, "分支组节点不对")
-    assert_true(out.path() not in group_paths(result), "OUT 被误判")
+                 {branch1.path(), branch2.path()},
+                 "wrong nodes in the branch group")
+    assert_true(out.path() not in group_paths(result), "OUT was wrongly flagged")
 
 
 def test_switch_and_bypass():
-    """4. Switch 未选中的输入保留；经过 bypass 节点连到终点的上游保留。"""
+    """4. Unselected Switch inputs and upstream of bypassed nodes are kept."""
     geo = new_scene()
     box_a = mk(geo, "box", "boxA")
     box_b = mk(geo, "box", "boxB")
@@ -161,14 +165,15 @@ def test_switch_and_bypass():
     out_byp = mk(geo, "null", "OUT_bypass", [bypassed])
 
     result = scan.scan_layer(geo)
-    assert_equal(result["groups"], [], "Switch 未选输入和 bypass 上游都应保留")
+    assert_equal(result["groups"], [],
+                 "unselected Switch inputs and bypass upstream must be kept")
     for node in (box_a, box_b, switch, out_sw, box_c, bypassed, out_byp):
         assert_true(node.path() not in group_paths(result),
-                    "%s 被误判为可清理" % node.path())
+                    "%s was wrongly flagged as cleanable" % node.path())
 
 
 def test_write_nodes_kept():
-    """5. 悬空但是 filecache / rop_geometry → 保留，连同上游。"""
+    """5. Dangling filecache / rop_geometry -> kept, with their upstream."""
     geo = new_scene()
     fc_input = mk(geo, "box", "fc_input")
     filecache = mk(geo, "filecache", "filecache1", [fc_input])
@@ -176,14 +181,15 @@ def test_write_nodes_kept():
     rop = mk(geo, "rop_geometry", "rop_geometry1", [rop_input])
 
     result = scan.scan_layer(geo)
-    assert_equal(result["groups"], [], "写文件节点及其上游都应保留")
+    assert_equal(result["groups"], [],
+                 "file-writing nodes and their upstream must be kept")
     for node in (fc_input, filecache, rop_input, rop):
         assert_true(node.path() not in group_paths(result),
-                    "%s 被误判为可清理" % node.path())
+                    "%s was wrongly flagged as cleanable" % node.path())
 
 
 def test_flags_and_comment_kept():
-    """6. 悬空但 display/render/template/footprint、lock、有 comment → 保留。"""
+    """6. Dangling but display/render/template/footprint, lock, or comment -> kept."""
     geo = new_scene()
     display_node = mk(geo, "null", "display_keep")
     display_node.setGenericFlag(hou.nodeFlag.Display, True)
@@ -198,23 +204,24 @@ def test_flags_and_comment_kept():
     softlock_node = mk(geo, "null", "softlock_keep")
     softlock_node.setGenericFlag(hou.nodeFlag.SoftLock, True)
     comment_node = mk(geo, "null", "comment_keep")
-    comment_node.setComment("这一串留着")
+    comment_node.setComment("keep this chain")
 
     result = scan.scan_layer(geo)
-    assert_equal(result["groups"], [], "带 flag/注释的节点都应保留")
+    assert_equal(result["groups"], [],
+                 "nodes with flags or comments must be kept")
     for node in (display_node, render_node, template_node, footprint_node,
                  lock_node, softlock_node, comment_node):
         assert_true(node.path() not in group_paths(result),
-                    "%s 被误判为可清理" % node.path())
+                    "%s was wrongly flagged as cleanable" % node.path())
 
 
 def test_referenced_nodes_kept():
-    """7. 被 ch()、object_merge、wrangle op: 引用的节点保留。"""
+    """7. Nodes referenced by ch(), object_merge, or wrangle op: are kept."""
     geo = new_scene()
 
     ref_channel = mk(geo, "xform", "ref_channel")
     holder = mk(geo, "xform", "holder")
-    holder.setComment("引用 holder")
+    holder.setComment("references holder")
     holder.parm("tx").setExpression('ch("../ref_channel/tx")')
 
     ref_objmerge = mk(geo, "null", "ref_objmerge")
@@ -237,27 +244,30 @@ def test_referenced_nodes_kept():
     all_grouped = group_paths(result)
     for node in (ref_channel, ref_objmerge, ref_wrangle, ref_cross):
         assert_true(node.path() not in all_grouped,
-                    "%s 被引用，应保留" % node.path())
-    # 引用者自己是漂浮的，仍然应该被清理（避免测试把整层都保下来）。
-    assert_true(obj_merge.path() in all_grouped, "object_merge 本身应被报成漂浮")
-    assert_true(wrangle.path() in all_grouped, "wrangle 本身应被报成漂浮")
+                    "%s is referenced and must be kept" % node.path())
+    # The referencing nodes themselves are floating and should still be
+    # reported, so the test does not keep the whole layer alive.
+    assert_true(obj_merge.path() in all_grouped,
+                "object_merge itself should be reported as floating")
+    assert_true(wrangle.path() in all_grouped,
+                "wrangle itself should be reported as floating")
 
 
 def test_layout_name_not_endpoint():
-    """8. 名字 layout1 不算终点（只认 out 开头）。"""
+    """8. A node named layout1 is not an endpoint (only names starting with out)."""
     geo = new_scene()
     layout = mk(geo, "null", "layout1")
 
     result = scan.scan_layer(geo)
-    assert_equal(len(result["groups"]), 1, "layout1 应被当成漂浮")
+    assert_equal(len(result["groups"]), 1, "layout1 should be floating")
     assert_equal(result["groups"][0]["status"], "floating",
-                 "layout1 不该因为名字被当成终点")
+                 "layout1 must not be an endpoint just because of its name")
     assert_equal(result["groups"][0]["node_paths"], [layout.path()],
-                 "layout1 分组不对")
+                 "wrong group for layout1")
 
 
 def test_path_checks():
-    """9. 路径断链 / 绝对路径的判断。"""
+    """9. Broken read paths and hardcoded absolute paths."""
     new_scene()
     hip_dir = hou.text.expandString("$HIP")
     try:
@@ -305,23 +315,23 @@ def test_path_checks():
     kinds = {}
     for issue in issues:
         for key in ("kind", "node_path", "parm_name", "reason"):
-            assert_true(key in issue, "检查结果缺少字段 %s" % key)
+            assert_true(key in issue, "issue is missing field %s" % key)
         kinds.setdefault(issue["node_path"], set()).add(issue["kind"])
 
     assert_true("broken_path" in kinds.get(broken.path(), set()),
-                "不存在的读路径应报断链")
+                "a missing read path should be reported as broken")
     assert_true("broken_path" not in kinds.get(partial.path(), set()),
-                "首尾帧有一帧存在就不该报断链")
+                "a sequence with one existing frame must not be broken")
     assert_true("broken_path" not in kinds.get(writer.path(), set()),
-                "写出路径不该查断链")
+                "write paths must not be checked for broken links")
     assert_true("absolute_path" in kinds.get(absolute.path(), set()),
-                "D:/... 原文应报绝对路径")
+                "D:/... should be reported as an absolute path")
     assert_true("absolute_path" not in kinds.get(variable.path(), set()),
-                "$HIP/... 不该报绝对路径")
+                "$HIP/... must not be reported as an absolute path")
     assert_true("broken_path" not in kinds.get(variable.path(), set()),
-                "存在的 $HIP 路径不该报断链")
+                "an existing $HIP path must not be reported as broken")
     assert_true("/stage" not in kinds and "/tasks" not in kinds,
-                "Manager 网络的工具路径不该被当成用户文件检查")
+                "manager-network tool paths must not be checked as user files")
 
     for path in created:
         try:
@@ -330,115 +340,301 @@ def test_path_checks():
             pass
 
 
-def test_colorize_restore_undo():
-    """10. 上色/恢复，以及撤销。"""
+def test_check_default_nodes():
+    """20. Default camera/material/ROP, write paths and relative paths stay quiet."""
+    new_scene()
+    cam = hou.node("/obj").createNode("cam", "check_cam")  # init script: file1 = defcam.bgeo
+    assert_true(cam.node("file1") is not None,
+                "precondition failed: a default camera should have a geo File SOP")
+    principled = hou.node("/mat").createNode("principledshader", "check_principled")
+    principled.cook(force=True)
+    texture = hou.node("/mat").createNode("texture", "check_texture")
+    texture.cook(force=True)
+    mantra = hou.node("/out").createNode("ifd", "check_mantra")
+    karma = hou.node("/out").createNode("karma", "check_karma")
+    # A user-set output path on a driver is a write path; it need not exist yet.
+    mantra.parm("vm_picture").set("$HIP/render/hipcheck_missing_$F4.exr")
+    karma.parm("picture").set("$HIP/render/hipcheck_missing_$F4.exr")
+    geo = hou.node("/obj/geo1")
+    rop_sop = geo.createNode("rop_geometry", "check_rop_geo")
+    rop_sop.parm("sopoutput").set("$HIP/geo/hipcheck_missing_output.bgeo")
+
+    assert_equal(scan.check_hip(), [],
+                 "default nodes and write paths must not be reported")
+
+    # Houdini resolves relative paths through its own search paths.
+    relative = mk(geo, "file", "check_relative")
+    relative.parm("filemode").set("read")
+    relative.parm("file").set("hipcheck_missing_relative.bgeo")
+    assert_equal(scan.check_hip(), [],
+                 "a relative read path must not be reported")
+
+    # A user-set missing read path is still reported.
+    broken = mk(geo, "file", "check_broken")
+    broken.parm("filemode").set("read")
+    broken.parm("file").set("$HIP/hipcheck_missing_12345.bgeo")
+    issues = scan.check_hip()
+    assert_equal([(issue["node_path"], issue["parm_name"], issue["kind"])
+                  for issue in issues],
+                 [(broken.path(), "file", "broken_path")],
+                 "a user-set missing read path must still be reported")
+    assert_equal(
+        issues[0]["reason"],
+        "File not found: %s"
+        % hou.text.expandString("$HIP/hipcheck_missing_12345.bgeo"),
+        "wrong broken-path wording")
+
+
+def test_colorize_undo():
+    """10. Colorize everything red (undo label) and Ctrl+Z restores the color."""
     geo = new_scene()
     node_a = mk(geo, "null", "color_a")
     node_b = mk(geo, "null", "color_b")
     orig_a, orig_b = node_a.color(), node_b.color()
-
-    groups = [{"status": "floating",
-               "node_paths": [node_a.path(), node_b.path()]}]
-    count = actions.colorize(groups)
-    assert_equal(count, 2, "上色节点数不对")
-    purple = hou.Color(*scan.COLOR_FLOATING)
-    assert_true(close_color(node_a.color(), purple), "漂浮节点应为紫色")
-    assert_true(node_a.userData(actions.ORIG_COLOR_KEY) is not None,
-                "上色前应记录原颜色")
-
     path_a, path_b = node_a.path(), node_b.path()
-    restored = actions.restore_colors(paths=[path_a, path_b])
-    assert_equal(restored, 2, "恢复节点数不对")
-    assert_true(close_color(node_a.color(), orig_a), "颜色应恢复原值")
-    assert_true(close_color(node_b.color(), orig_b), "颜色应恢复原值")
-    assert_true(node_a.userData(actions.ORIG_COLOR_KEY) is None,
-                "恢复后应清掉 userData")
-    assert_true(node_a.isGenericFlagSet(hou.nodeFlag.ColorDefault),
-                "原本默认色的节点恢复后应是默认色")
 
-    actions.colorize([{"status": "unused_branch",
-                       "node_paths": [path_a, path_b]}])
-    yellow = hou.Color(*scan.COLOR_UNUSED_BRANCH)
-    assert_true(close_color(node_a.color(), yellow), "没用分支应为黄色")
+    count = actions.colorize([path_a, path_b])
+    assert_equal(count, 2, "wrong number of nodes colored")
+    red = hou.Color(*actions.COLOR_RED)
+    assert_true(close_color(node_a.color(), red), "node should be red")
+    assert_true(close_color(node_b.color(), red), "node should be red")
+    assert_true(node_a.userData(actions.IGNORE_KEY) is None,
+                "colorize must not mark nodes as ignored")
+    labels = hou.undos.undoLabels()
+    assert_true(labels and labels[0] == actions.UNDO_PREFIX + "color",
+                "colorize undo label must be %r, got %r"
+                % (actions.UNDO_PREFIX + "color", labels[:1]))
+
     hou.undos.performUndo()
     assert_true(close_color(node_a.color(), orig_a),
-                "performUndo 应撤回上色")
+                "performUndo should revert the colorize")
     assert_true(close_color(node_b.color(), orig_b),
-                "performUndo 应撤回上色")
-
-    # 存盘再开，userData 记录还在，仍能恢复。
-    actions.colorize([{"status": "floating", "node_paths": [path_a]}])
-    scene = os.path.join(TMP, "color_persist.hip")
-    hou.hipFile.save(file_name=scene)
-    hou.hipFile.load(scene, suppress_save_prompt=True)
-    reloaded = hou.node(path_a)
-    assert_true(reloaded is not None, "重新载入后节点应还在")
-    assert_true(reloaded.userData(actions.ORIG_COLOR_KEY) is not None,
-                "存盘再开后原色记录应还在")
-    actions.restore_colors(paths=[path_a])
-    assert_true(close_color(reloaded.color(), orig_a),
-                "存盘再开后应能恢复原色")
-    assert_true(reloaded.userData(actions.ORIG_COLOR_KEY) is None,
-                "恢复后应清掉 userData")
+                "performUndo should revert the colorize")
 
 
-def test_backup_then_delete():
-    """11. 备份不覆盖；新文件拒绝；删除可撤销。"""
-    hou.hipFile.clear(suppress_save_prompt=True)
-    geo = hou.node("/obj").createNode("geo", "geo1")
-    _clear_flags(geo)
+def test_ignore_roundtrip():
+    """11. Ignore marks round trip and are undone with Ctrl+Z."""
+    geo = new_scene()
+    node_a = mk(geo, "null", "ignore_a")
+    node_b = mk(geo, "null", "ignore_b")
+    path_a, path_b = node_a.path(), node_b.path()
+
+    assert_true(not actions.is_ignored(node_a), "a new node must not be ignored")
+    assert_equal(actions.ignore([path_a, path_b, "/obj/does_not_exist"]), 2,
+                 "wrong number of nodes marked ignored")
+    assert_true(actions.is_ignored(node_a), "node_a should be ignored")
+    assert_true(actions.is_ignored(node_b), "node_b should be ignored")
+    assert_equal(node_a.userData(actions.IGNORE_KEY), "1",
+                 "the ignore mark should be the userData value '1'")
+    assert_equal(actions.ignore([path_a]), 0,
+                 "an already ignored node must not count again")
+    labels = hou.undos.undoLabels()
+    assert_true(labels and labels[0] == actions.UNDO_PREFIX + "ignore",
+                "ignore undo label must be %r, got %r"
+                % (actions.UNDO_PREFIX + "ignore", labels[:1]))
+
+    assert_equal(actions.unignore([path_a]), 1, "wrong number of nodes unmarked")
+    assert_true(not actions.is_ignored(node_a), "node_a should no longer be ignored")
+    assert_true(actions.is_ignored(node_b), "node_b must keep its mark")
+    assert_equal(actions.unignore([path_a]), 0,
+                 "an unignored node must not count again")
+    labels = hou.undos.undoLabels()
+    assert_true(labels and labels[0] == actions.UNDO_PREFIX + "unignore",
+                "unignore undo label must be %r, got %r"
+                % (actions.UNDO_PREFIX + "unignore", labels[:1]))
+
+    hou.undos.performUndo()
+    assert_true(actions.is_ignored(node_a), "Ctrl+Z should undo the unignore")
+    hou.undos.performUndo()
+    assert_true(not actions.is_ignored(node_a) and not actions.is_ignored(node_b),
+                "Ctrl+Z should undo the ignore")
+
+
+def test_check_hip_ignored():
+    """12. check_hip hides ignored nodes by default and flags them on request."""
+    geo = new_scene()
+
+    def broken_node(name):
+        node = mk(geo, "file", name)
+        node.parm("filemode").set("read")
+        node.parm("file").set("$HIP/hipcheck_missing_%s.bgeo" % name)
+        return node
+
+    ignored_node = broken_node("check_ignored")
+    kept_node = broken_node("check_kept")
+
+    issues = scan.check_hip()
+    assert_equal({issue["node_path"] for issue in issues},
+                 {ignored_node.path(), kept_node.path()},
+                 "both broken nodes should be reported")
+    assert_true(all(issue["ignored"] is False for issue in issues),
+                "nothing is ignored yet, so every issue's ignored flag is False")
+
+    actions.ignore([ignored_node.path()])
+    issues = scan.check_hip()
+    assert_equal({issue["node_path"] for issue in issues}, {kept_node.path()},
+                 "an ignored node must be hidden by default")
+    assert_true(all(issue["ignored"] is False for issue in issues),
+                "default results carry ignored=False")
+
+    full = scan.check_hip(include_ignored=True)
+    assert_equal({issue["node_path"] for issue in full},
+                 {ignored_node.path(), kept_node.path()},
+                 "include_ignored should bring the ignored node back")
+    for issue in full:
+        assert_equal(issue["ignored"], issue["node_path"] == ignored_node.path(),
+                     "wrong ignored flag on %s" % issue["node_path"])
+
+
+def test_delete_undo():
+    """13. Delete returns the count and Ctrl+Z restores the nodes."""
+    geo = new_scene()
     node_a = mk(geo, "null", "delete_a")
     node_b = mk(geo, "null", "delete_b")
     path_a, path_b = node_a.path(), node_b.path()
 
-    scene_dir = os.path.join(TMP, "backup_case")
-    os.makedirs(scene_dir, exist_ok=True)
-    hip_path = os.path.join(scene_dir, "scene.hip")
-    hou.hipFile.save(file_name=hip_path)
-    main_mtime = os.stat(hip_path).st_mtime_ns
-
-    backup1 = actions.backup_then_delete([path_a])
-    assert_true(os.path.isfile(backup1), "第一次备份文件不存在")
-    assert_true(hou.node(path_a) is None, "第一次删除没生效")
-    content1 = open(backup1, "rb").read()
-    backup1_mtime = os.stat(backup1).st_mtime_ns
+    assert_equal(actions.delete([path_a, path_b, "/obj/does_not_exist"]), 2,
+                 "wrong number of nodes deleted")
+    assert_true(hou.node(path_a) is None, "node_a should be deleted")
+    assert_true(hou.node(path_b) is None, "node_b should be deleted")
+    labels = hou.undos.undoLabels()
+    assert_true(labels and labels[0] == actions.UNDO_PREFIX + "delete",
+                "delete undo label must be %r, got %r"
+                % (actions.UNDO_PREFIX + "delete", labels[:1]))
 
     hou.undos.performUndo()
-    assert_true(hou.node(path_a) is not None, "删除应能撤销")
+    assert_true(hou.node(path_a) is not None, "Ctrl+Z should restore node_a")
+    assert_true(hou.node(path_b) is not None, "Ctrl+Z should restore node_b")
 
-    time.sleep(0.03)
-    backup2 = actions.backup_then_delete([path_b])
-    assert_true(os.path.isfile(backup2), "第二次备份文件不存在")
-    assert_true(backup2 != backup1, "两次备份应是不同文件")
-    assert_true(open(backup1, "rb").read() == content1, "旧备份内容被改了")
-    assert_true(os.stat(backup1).st_mtime_ns == backup1_mtime,
-                "旧备份的修改时间被改了")
-    assert_true(os.stat(hip_path).st_mtime_ns == main_mtime,
-                "主 hip 文件被工具改动了")
+    # A node and its upstream are both deleted in one undoable step.
+    upstream = mk(geo, "null", "delete_upstream")
+    downstream = mk(geo, "null", "delete_downstream", [upstream])
+    up_path, down_path = upstream.path(), downstream.path()
+    assert_equal(actions.delete([up_path, down_path]), 2,
+                 "an upstream and downstream node should both be counted")
+    assert_true(hou.node(up_path) is None, "the upstream node should be gone")
+    assert_true(hou.node(down_path) is None, "the downstream node should be gone")
+    hou.undos.performUndo()
+    assert_true(hou.node(up_path) is not None, "the upstream node should be back")
+    assert_true(hou.node(down_path) is not None, "the downstream node should be back")
 
-    hou.hipFile.clear(suppress_save_prompt=True)
-    try:
-        actions.backup_then_delete([])
-    except RuntimeError:
-        pass
-    else:
-        raise AssertionError("新文件（未存盘）时 backup_then_delete 应拒绝执行")
+
+def test_scan_layer_ignored():
+    """14. scan_layer hides ignored nodes by default and flags them on request."""
+    geo = new_scene()
+    head = mk(geo, "null", "ig_head")
+    mid = mk(geo, "xform", "ig_mid", [head])
+    tail = mk(geo, "null", "ig_tail", [mid])
+    solo = mk(geo, "null", "ig_solo")
+    actions.ignore([head.path(), solo.path()])
+
+    result = scan.scan_layer(geo)
+    assert_equal(len(result["groups"]), 1,
+                 "the fully ignored group must be dropped")
+    group = result["groups"][0]
+    assert_equal(set(group["node_paths"]), {mid.path(), tail.path()},
+                 "ignored nodes must be hidden by default")
+    assert_equal(group["ignored_paths"], [],
+                 "ignored_paths is empty by default")
+
+    full = scan.scan_layer(geo, include_ignored=True)
+    assert_equal(len(full["groups"]), 2,
+                 "include_ignored should keep both groups")
+    chain_group = next(
+        group for group in full["groups"] if mid.path() in group["node_paths"])
+    assert_equal(set(chain_group["node_paths"]),
+                 {head.path(), mid.path(), tail.path()},
+                 "ignore marks must not change the grouping")
+    assert_equal(chain_group["ignored_paths"], [head.path()],
+                 "the ignored subset must be reported")
+    solo_group = next(
+        group for group in full["groups"] if solo.path() in group["node_paths"])
+    assert_equal(solo_group["ignored_paths"], [solo.path()],
+                 "a fully ignored group reports all its paths")
+
+    # Ignore marks are applied after the analysis: an ignored endpoint still
+    # keeps its upstream useful.
+    geo = new_scene()
+    box = mk(geo, "box", "ig_box")
+    out = mk(geo, "null", "OUT_ignored", [box])
+    actions.ignore([out.path()])
+    assert_equal(scan.scan_layer(geo)["groups"], [],
+                 "an ignored endpoint must still keep its upstream")
 
 
 def test_unsupported_layers():
-    """12. 不是 SOP 的层返回“不支持”和明确原因。"""
+    """12. Non-SOP layers report 'unsupported' with a reason."""
     new_scene()
     for path in ("/obj", "/out"):
         node = hou.node(path)
-        assert_true(node is not None, "%s 应存在" % path)
+        assert_true(node is not None, "%s should exist" % path)
         result = scan.scan_layer(node)
-        assert_true(not result["supported"], "%s 不该支持清理" % path)
-        assert_true(bool(result.get("reason")), "%s 应给出原因" % path)
-        assert_equal(result["groups"], [], "不支持的层不该有分组")
+        assert_true(not result["supported"], "%s must not be cleanable" % path)
+        assert_true(bool(result.get("reason")), "%s needs a reason" % path)
+        assert_equal(result["groups"], [], "unsupported layers have no groups")
+
+
+def test_select_in_layer():
+    """13. The selection helper selects only nodes whose parent is the given layer."""
+    geo = new_scene()
+    node_a = mk(geo, "null", "select_a")
+    node_b = mk(geo, "null", "select_b")
+    other_geo = hou.node("/obj").createNode("geo", "geo2")
+    _clear_flags(other_geo)
+    node_c = mk(other_geo, "null", "select_c")
+
+    import hipcheck.ui as ui  # noqa: E402
+
+    # A pre-existing selection is cleared, and other layers are untouched.
+    node_c.setSelected(True)
+    count = ui._select_in_layer(
+        [node_a.path(), node_b.path(), node_c.path()], geo)
+    assert_equal(count, 2, "only nodes in the given layer should be selected")
+    selected = {node.path() for node in hou.selectedNodes()}
+    assert_equal(selected, {node_a.path(), node_b.path()},
+                 "wrong nodes selected for the layer")
+
+    # A layer given as a path string behaves the same.
+    count = ui._select_in_layer([node_a.path(), node_c.path()], other_geo.path())
+    assert_equal(count, 1, "layer path string should work")
+    selected = {node.path() for node in hou.selectedNodes()}
+    assert_equal(selected, {node_c.path()}, "wrong nodes selected for the layer")
+
+    # No matching node: the Houdini selection is left untouched.
+    node_a.setSelected(True, clear_all_selected=True)
+    count = ui._select_in_layer([node_c.path()], geo)
+    assert_equal(count, 0, "a path from another layer should select nothing")
+    selected = {node.path() for node in hou.selectedNodes()}
+    assert_equal(selected, {node_a.path()},
+                 "a non-matching selection must not clear the Houdini selection")
+
+
+def test_delete_revalidation():
+    """18. A node that became used after the scan is dropped before deleting."""
+    geo = new_scene()
+    box = mk(geo, "box", "box1")
+    xform = mk(geo, "xform", "xform1", [box])
+    merge = mk(geo, "merge", "merge1", [xform])
+    mk(geo, "null", "OUT_main", [merge])
+    stray = mk(geo, "null", "stray")
+    stale = mk(geo, "null", "stale")
+
+    import hipcheck.ui as ui  # noqa: E402
+
+    paths = [stray.path(), stale.path()]
+    _, kept = ui._unused_paths(paths, geo)
+    assert_equal(set(kept), set(paths),
+                 "both unused nodes should survive re-validation")
+
+    # The stale node becomes useful after the list was built.
+    merge.setInput(1, stale)
+    _, kept = ui._unused_paths(paths, geo)
+    assert_equal(kept, [stray.path()],
+                 "a node that became used must be dropped before deleting")
 
 
 def test_ui():
-    """13. ui.py 可编译；在 hython 里能构造窗口并显示清理分组。"""
+    """15. ui.py compiles; the window builds; select all buttons; jump cells."""
     package_dir = os.path.join(ROOT, "python", "hipcheck")
     for name in sorted(os.listdir(package_dir)):
         if name.endswith(".py"):
@@ -452,31 +648,126 @@ def test_ui():
     if _APP is None:
         _APP = QtWidgets.QApplication([])
 
+    def has_jump(item, column):
+        """Rows with a jump button carry ui._ROLE_JUMP on the jump column."""
+        return bool(item.data(column, ui._ROLE_JUMP))
+
     geo = new_scene()
-    mk(geo, "null", "ui_floating")
-    hou.cd(geo.path())  # hython 没有网络编辑器，用 pwd 模拟“当前层”
+    floating = mk(geo, "null", "ui_floating")
+    floating2 = mk(geo, "null", "ui_floating_2")
+    hou.cd(geo.path())  # hython has no network editor; pwd stands in for the layer
 
     window = ui.show()
-    assert_true(window is not None, "ui.show() 应返回窗口")
-    assert_true(isinstance(window, QtWidgets.QDialog), "窗口应是 QDialog")
-    assert_true(window._clean_tree.topLevelItemCount() >= 1,
-                "清理列表应显示分组")
-    first = window._clean_tree.topLevelItem(0)
-    assert_true(first.checkState(0) == QtCore.Qt.Checked,
-                "清理分组默认应全部勾上")
-    assert_true(not window._delete_btn.isEnabled(),
-                "未存盘时删除按钮应灰掉")
-    assert_true(ui.show() is window, "再次 show() 应复用同一个窗口")
+    assert_true(window is not None, "ui.show() should return a window")
+    assert_true(isinstance(window, QtWidgets.QDialog), "the window should be a QDialog")
+
+    check_tree = window._check_tree
+    clean_tree = window._clean_tree
+    for tree in (check_tree, clean_tree):
+        assert_equal(tree.selectionMode(),
+                     QtWidgets.QAbstractItemView.ExtendedSelection,
+                     "both trees must allow multi-selection")
+
+    assert_equal(check_tree.columnCount(), 5, "check tree needs 5 columns")
+    assert_true(isinstance(check_tree.itemDelegateForColumn(4), ui._JumpDelegate),
+                "check tree needs a jump-button column")
+    assert_equal(clean_tree.columnCount(), 4, "clean tree needs 4 columns")
+    assert_true(isinstance(clean_tree.itemDelegateForColumn(3), ui._JumpDelegate),
+                "clean tree needs a jump-button column")
+
+    assert_true(clean_tree.topLevelItemCount() >= 1,
+                "clean list should show groups")
+    group = None
+    for index in range(clean_tree.topLevelItemCount()):
+        candidate = clean_tree.topLevelItem(index)
+        if candidate.text(0) == "Floating":
+            group = candidate
+            break
+    assert_true(group is not None, "a floating group should be listed")
+    assert_true(group.data(0, QtCore.Qt.CheckStateRole) is None,
+                "clean group rows must not have checkboxes")
+    assert_true(not group.isExpanded(), "Floating should start collapsed")
+    assert_equal(group.childCount(), 2, "two floating chains -> two chain rows")
+    assert_equal(group.text(1), "2", "the status row counts all its nodes")
+    chain = group.child(0)
+    assert_equal(chain.childCount(), 1, "each chain row holds its node")
+    child = chain.child(0)
+    assert_true(has_jump(group, 3), "group rows need a jump cell")
+    assert_true(has_jump(child, 3), "node rows need a jump cell")
+    assert_true(child.data(0, QtCore.Qt.UserRole) in (floating.path(), floating2.path()),
+                "node rows should carry their node path")
+    assert_true(child.data(0, QtCore.Qt.CheckStateRole) is None,
+                "clean node rows must not have checkboxes")
+
+    # Select All is a plain button above each tree; one click selects every row.
+    for button in (window._check_all, window._clean_all):
+        assert_true(isinstance(button, QtWidgets.QPushButton),
+                    "Select All must be a QPushButton, not a checkbox")
+        assert_equal(button.text(), "Select All", "wrong Select All button text")
+    window._clean_all.click()
+    assert_equal(set(window._selected_paths(clean_tree)),
+                 {floating.path(), floating2.path()},
+                 "Select All should stand for every clean node")
+    window._check_all.click()
+    assert_equal(len(clean_tree.selectedItems()), 0,
+                 "Select All in the other tree should clear this tree")
+
+    # Only the jump column triggers a jump; a group row jumps to all its nodes.
+    hou.clearAllSelected()
+    window._on_tree_clicked(clean_tree, child, 0)
+    assert_equal(len(hou.selectedNodes()), 0,
+                 "clicking a non-jump column must not jump")
+    window._on_tree_clicked(clean_tree, child, 3)
+    assert_true(hou.node(child.data(0, QtCore.Qt.UserRole)).isSelected(),
+                "the jump cell should select its node")
+
+    # A group row jumps to all its nodes.
+    hou.clearAllSelected()
+    window._on_tree_clicked(clean_tree, group, 3)
+    assert_equal({node.path() for node in hou.selectedNodes()},
+                 set(group.data(0, QtCore.Qt.UserRole + 1)["node_paths"]),
+                 "the group jump cell should select every node of the group")
+
+    # The jump helper takes a list; the single-node jump is the 1-element case.
+    assert_true(ui._jump_to([floating.path(), floating2.path()]),
+                "a jump to existing nodes should succeed")
+    assert_equal({node.path() for node in hou.selectedNodes()},
+                 {floating.path(), floating2.path()},
+                 "the jump helper should select every node it is given")
+    assert_true(not ui._jump_to(["/obj/does_not_exist"]),
+                "a jump to a missing node should fail")
+
+    assert_true(window._delete_btn.isEnabled(),
+                "delete is enabled whenever the Clean list has rows")
+
+    # Ignore: the button flips to Unignore when everything selected is ignored;
+    # ignored nodes vanish unless Show Ignored is on.
+    clean_tree.clearSelection()
+    group.setSelected(True)
+    assert_equal(window._ignore_btn.text(), "Ignore Selected", "ignore label")
+    window._toggle_ignore()
+    assert_equal(window._clean_tree.topLevelItemCount(), 0,
+                 "ignored nodes are hidden by default")
+    window._show_ignored.setChecked(True)
+    assert_true(window._clean_tree.topLevelItemCount() == 1,
+                "Show Ignored lists them again")
+    window._clean_all.click()
+    assert_equal(window._ignore_btn.text(), "Unignore Selected",
+                 "all-ignored selection offers Unignore")
+    window._toggle_ignore()
+    assert_true(not actions.is_ignored(hou.node(floating.path())),
+                "Unignore clears the mark")
+    window._show_ignored.setChecked(False)
+    assert_true(ui.show() is window, "a second show() should reuse the window")
     window.close()
-    assert_true(ui._get_window() is None, "关闭后单例应清掉")
+    assert_true(ui._get_window() is None, "closing should clear the singleton")
 
 
 # ---------------------------------------------------------------------------
-# 入口
+# Entry point
 # ---------------------------------------------------------------------------
 
 def _save_and_reload(name):
-    import tempfile
     path = os.path.join(tempfile.mkdtemp(prefix="hipcheck_"), name).replace("\\", "/")
     hou.hipFile.save(path)
     hou.hipFile.load(path, suppress_save_prompt=True, ignore_load_warnings=True)
@@ -484,26 +775,26 @@ def _save_and_reload(name):
 
 
 def test_hda_self_reference_not_kept():
-    """14. HDA（如 H21 的 Color SOP）内部引用自己参数，不算外部引用；存盘重开后也要判为没用分支。"""
+    """16. An HDA (e.g. H21's Color SOP) referencing its own parms is not externally referenced."""
     geo = new_scene()
     box = mk(geo, "box", "box1")
     mk(geo, "null", "OUT_main", [box])
-    color = geo.createNode("color", "dead_color")  # 正常初始化，带 HDA 内部节点
+    color = geo.createNode("color", "dead_color")  # normal init, with HDA internals
     color.setInput(0, box)
     geo_path = geo.path()
     _save_and_reload("hda_self_ref.hip")
     geo = hou.node(geo_path)
-    geo.node("dead_color").cook(force=True)  # 让 HDA 内部引用关系生成（界面里打开工程时会自然发生）
+    geo.node("dead_color").cook(force=True)  # make internal references appear
     assert_true(any(d.path().startswith(geo_path + "/dead_color/")
                     for d in geo.node("dead_color").dependents()),
-                "前提不成立：Color SOP 内部没有引用自己")
+                "precondition failed: Color SOP has no internal self reference")
     result = scan.scan_layer(geo)
-    assert_equal(status_of(result, geo.path() + "/dead_color"), "unused_branch",
-                 "HDA 自引用被误当成外部引用")
+    assert_equal(status_of(result, geo_path + "/dead_color"), "unused_branch",
+                 "an HDA self reference was wrongly treated as external")
 
 
 def test_check_false_positives():
-    """15. 锁住 HDA 的内部节点、出厂默认值的文件参数（scatter 的 default.pic）不报。"""
+    """17. Locked HDA internals and factory-default file parms (scatter default.pic) are not reported."""
     geo = new_scene()
     box = mk(geo, "box", "box1")
     sc = geo.createNode("scatter", "sc"); sc.setInput(0, box)
@@ -512,8 +803,9 @@ def test_check_false_positives():
     _save_and_reload("check_fp.hip")
     bad = [r for r in scan.check_hip()
            if r["node_path"].startswith(geo_path + "/fc/")
-           or (r["node_path"] == geo_path + "/sc" and r["parm_name"] == "densitytexture")]
-    assert_equal(bad, [], "检查出现误报")
+           or (r["node_path"] == geo_path + "/sc"
+               and r["parm_name"] == "densitytexture")]
+    assert_equal(bad, [], "check reported false positives")
 
 
 TESTS = [
@@ -528,9 +820,15 @@ TESTS = [
     ("referenced_nodes_kept", test_referenced_nodes_kept),
     ("layout_name_not_endpoint", test_layout_name_not_endpoint),
     ("path_checks", test_path_checks),
-    ("colorize_restore_undo", test_colorize_restore_undo),
-    ("backup_then_delete", test_backup_then_delete),
+    ("check_default_nodes", test_check_default_nodes),
+    ("colorize_undo", test_colorize_undo),
+    ("ignore_roundtrip", test_ignore_roundtrip),
+    ("check_hip_ignored", test_check_hip_ignored),
+    ("delete_undo", test_delete_undo),
+    ("scan_layer_ignored", test_scan_layer_ignored),
     ("unsupported_layers", test_unsupported_layers),
+    ("select_in_layer", test_select_in_layer),
+    ("delete_revalidation", test_delete_revalidation),
     ("ui", test_ui),
 ]
 

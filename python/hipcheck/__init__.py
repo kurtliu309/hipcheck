@@ -1,3 +1,3 @@
-"""hipcheck — Houdini 工程体检与清理工具。"""
+"""hipcheck — Houdini scene check and clean-up tool."""
 
-__version__ = "1.0.0"
+__version__ = "1.3.1"

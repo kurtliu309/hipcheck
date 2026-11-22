@@ -8,12 +8,7 @@
                 "value": "$HIPCHECK/python",
                 "method": "append"
             }
-        },
-        {
-            "HOUDINI_PATH": {
-                "value": "$HIPCHECK",
-                "method": "append"
-            }
         }
-    ]
+    ],
+    "path": "$HIPCHECK"
 }
