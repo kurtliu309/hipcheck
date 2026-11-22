@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<shelfDocument>
+    <toolshelf name="hipcheck" label="hipcheck">
+        <memberTool name="hipcheck"/>
+    </toolshelf>
+
+    <tool name="hipcheck" label="hipcheck" icon="MISC_python">
+        <script scriptType="python"><![CDATA[import hipcheck.ui
+hipcheck.ui.show()]]></script>
+    </tool>
+</shelfDocument>

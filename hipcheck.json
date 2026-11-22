@@ -1,0 +1,19 @@
+{
+    "env": [
+        {
+            "HIPCHECK": "D:/Kurt/Houdini/tools/hipcheck"
+        },
+        {
+            "PYTHONPATH": {
+                "value": "$HIPCHECK/python",
+                "method": "append"
+            }
+        },
+        {
+            "HOUDINI_PATH": {
+                "value": "$HIPCHECK",
+                "method": "append"
+            }
+        }
+    ]
+}
