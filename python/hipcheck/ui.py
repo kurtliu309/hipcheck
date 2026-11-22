@@ -12,7 +12,7 @@ from hutil.Qt import QtCore, QtWidgets
 
 from . import actions, scan
 
-_WINDOW = None
+
 
 _STATUS_LABELS = {
     "floating": "漂浮",
@@ -74,7 +74,7 @@ class HipcheckWindow(QtWidgets.QDialog):
     """单例弹窗本体；用 ``ui.show()`` 打开。"""
 
     def __init__(self, parent=None):
-        super(HipcheckWindow, self).__init__(parent)
+        super().__init__(parent)
         self.setWindowTitle("hipcheck — 工程体检与清理")
         self.resize(940, 660)
 
@@ -368,33 +368,54 @@ class HipcheckWindow(QtWidgets.QDialog):
             QtWidgets.QMessageBox.warning(self, "hipcheck", str(exc))
             self._set_status("删除已停止：%s" % exc)
             return
-        self._set_status("已备份到 %s，删除 %d 个节点。" % (backup, len(paths)))
-        self.refresh()
+        self.refresh()  # 先重扫，再写状态，免得“已备份到…”被“扫描完成”盖掉
+        self._set_status("已备份到 %s，删除 %d 个节点。Ctrl+Z 可撤回。" % (backup, len(paths)))
 
     # -- 生命周期 -----------------------------------------------------------
 
     def closeEvent(self, event):
-        global _WINDOW
-        if _WINDOW is self:
-            _WINDOW = None
-        super(HipcheckWindow, self).closeEvent(event)
+        if _get_window() is self:
+            _set_window(None)
+        super().closeEvent(event)
+
+
+# 窗口引用存在 hou.session 上：模块被重新加载（开发时 reload）也不会冒出第二个窗口。
+_SESSION_KEY = "_hipcheck_window"
+
+
+def _get_window():
+    try:
+        return getattr(hou.session, _SESSION_KEY, None)
+    except Exception:
+        return None
+
+
+def _set_window(window):
+    try:
+        setattr(hou.session, _SESSION_KEY, window)
+    except Exception:
+        pass
 
 
 def show(parent=None):
     """打开（或复用）非模态弹窗；再点入口会前置并重扫。"""
-    global _WINDOW
-    if _WINDOW is not None:
+    old = _get_window()
+    if old is not None:
         try:
-            _WINDOW.refresh()
-            _WINDOW.show()
-            _WINDOW.raise_()
-            _WINDOW.activateWindow()
-            return _WINDOW
+            if type(old).__name__ == HipcheckWindow.__name__ and isinstance(old, HipcheckWindow):
+                old.refresh()
+                old.show()
+                old.raise_()
+                old.activateWindow()
+                return old
+            old.close()  # 旧版本代码留下的窗口：关掉换新的
         except RuntimeError:
-            _WINDOW = None
+            pass
+        _set_window(None)
 
     if parent is None:
         parent = _main_window()
-    _WINDOW = HipcheckWindow(parent)
-    _WINDOW.show()
-    return _WINDOW
+    window = HipcheckWindow(parent)
+    _set_window(window)
+    window.show()
+    return window

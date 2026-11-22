@@ -262,9 +262,17 @@ def _value_exists(value, node=None):
         except Exception:
             return False
     try:
-        return os.path.exists(value)
+        if os.path.exists(value):
+            return True
     except Exception:
-        return False
+        pass
+    # 相对路径（如 scatter 的 default.pic）Houdini 会去 HOUDINI_PATH 里找。
+    if not os.path.isabs(value):
+        try:
+            return hou.findFile(value) is not None
+        except Exception:
+            return False
+    return False
 
 
 def _token_matches_path(text, node_path):
@@ -289,6 +297,12 @@ def check_hip():
     for node in _all_nodes():
         if _is_manager_node(node):
             continue
+        # 锁住的 HDA 内部节点由 HDA 自己管，用户该看的是 HDA 本身的参数。
+        try:
+            if node.isInsideLockedHDA():
+                continue
+        except Exception:
+            pass
         try:
             parms = node.parms()
         except Exception:
@@ -296,6 +310,15 @@ def check_hip():
         for parm in parms:
             if not _is_file_reference_parm(parm):
                 continue
+            # 界面上灰掉或隐藏的参数（功能没启用）不报。
+            try:
+                if parm.isDisabled() or parm.isHidden():
+                    continue
+                # 还是出厂默认值（如 scatter 的 default.pic）说明用户没设过，不报。
+                if parm.isAtDefault():
+                    continue
+            except Exception:
+                pass
             try:
                 raw = parm.unexpandedString()
             except Exception:
@@ -347,6 +370,11 @@ def _unsupported(network_node, reason):
     }
 
 
+def _is_self_or_inside(ref_path, target_path):
+    """ref 是 target 自己或在它里面（HDA 内部引用自己参数），不算外部引用。"""
+    return ref_path == target_path or ref_path.startswith(target_path + "/")
+
+
 def _collect_referenced_paths(layer, layer_nodes):
     """在整个 hip 里找对 ``layer_nodes`` 的引用，返回被引用节点的路径集合。"""
     candidates = {node.path(): node for node in layer_nodes}
@@ -361,7 +389,7 @@ def _collect_referenced_paths(layer, layer_nodes):
             dependents = ()
         for dependent in dependents:
             try:
-                if dependent.path() != candidate.path():
+                if not _is_self_or_inside(dependent.path(), candidate.path()):
                     referenced.add(candidate.path())
                     break
             except Exception:
@@ -382,7 +410,7 @@ def _collect_referenced_paths(layer, layer_nodes):
             for ref_parm in ref_parms:
                 try:
                     ref_node = ref_parm.node()
-                    if ref_node.path() != candidate.path():
+                    if not _is_self_or_inside(ref_node.path(), candidate.path()):
                         referenced.add(candidate.path())
                         break
                 except Exception:
@@ -406,7 +434,7 @@ def _collect_referenced_paths(layer, layer_nodes):
                 for target in targets:
                     try:
                         if (target.path() in candidates
-                                and target.path() != ref_node.path()):
+                                and not _is_self_or_inside(ref_node.path(), target.path())):
                             referenced.add(target.path())
                     except Exception:
                         continue
@@ -424,7 +452,7 @@ def _collect_referenced_paths(layer, layer_nodes):
                 continue
 
             for path in list(candidates):
-                if path == ref_node.path():
+                if _is_self_or_inside(ref_node.path(), path):
                     continue
                 if _token_matches_path(raw, path):
                     referenced.add(path)
@@ -452,7 +480,7 @@ def _collect_referenced_paths(layer, layer_nodes):
                     continue
                 try:
                     if (target.path() in candidates
-                            and target.path() != ref_node.path()):
+                            and not _is_self_or_inside(ref_node.path(), target.path())):
                         referenced.add(target.path())
                 except Exception:
                     continue

@@ -2,15 +2,23 @@
 
 ## 当前状态
 
-v1.0.0（2026-11-22）已实现：
+v1.0.1（2026-11-22）。界面实测已通过（见 CHANGELOG v1.0.1），等 Kurt 自己用真实工程试。
+
+示例场景：`tests/example/build_example.py` 在当前 Houdini 会话里搭场景并存成 `tests/example/hipcheck_example.hip`（`backup/` 里是删除测试留下的备份）。在 Houdini 里跑它（或用 `pipeline/tools/hou_exec.py`）就能重建。
+
+注意：
+- 本机界面版 Houdini 的 pref 目录是 `C:/Users/suzyz/OneDrive/文档/houdini21.0`，hython 用的是 `C:/Users/suzyz/houdini21.0`，两者不同。package 装在前者（和 kpipe.json 在一起），已验证重启后自动加载。
+- 通过 fxhoudini MCP 远程执行的代码会包在撤销组里，里面调 `hou.undos.performUndo()` 会报错；测撤销要在界面上用 Edit → Undo。
+- 别对失效的 Qt 窗口对象调 `deleteLater()`，会让 Houdini 崩溃（实测踩过）。
+
+v1.0.0 已实现：
 
 - `python/hipcheck/scan.py`：`check_hip()`、`scan_layer()`，无 UI，可在 hython 跑。
 - `python/hipcheck/actions.py`：`highlight()`、`colorize()`、`restore_colors()`、`backup_then_delete()`。
 - `python/hipcheck/ui.py`：非模态单例弹窗，Qt 只从 `hutil.Qt` 导入。
 - `hipcheck.json`（Houdini package）+ `toolbar/hipcheck.shelf`（`hipcheck` shelf 工具）。
-- `tests/run_tests.py`：13 项 hython 测试，当前 `ALL PASS 13/13`（Opus 复跑确认）。
-- 已安装到本机：`C:/Users/suzyz/houdini21.0/packages/hipcheck.json`（本机 pref 目录不在 Documents 下；packages 文件夹是新建的）。hython 里 `import hipcheck` 正常。
-- **等 Kurt 验收**：在 Houdini 界面里点弹窗看外观、跳转、高亮、上色、删除。网络编辑器的高亮/跳转在 hython 测不了，只核对过 API。
+- `tests/run_tests.py`：15 项 hython 测试，当前 `ALL PASS 15/15`。
+- 已安装到本机：`C:/Users/suzyz/OneDrive/文档/houdini21.0/packages/hipcheck.json`。
 - 已知可能慢的地方：引用检查对整个 hip 的每个字符串参数 × 当前层每个节点做匹配，超大工程可能要几秒以上，v1 没做进度条。
 
 ## 怎么装

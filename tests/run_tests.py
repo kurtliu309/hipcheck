@@ -468,14 +468,57 @@ def test_ui():
                 "未存盘时删除按钮应灰掉")
     assert_true(ui.show() is window, "再次 show() 应复用同一个窗口")
     window.close()
-    assert_true(ui._WINDOW is None, "关闭后单例应清掉")
+    assert_true(ui._get_window() is None, "关闭后单例应清掉")
 
 
 # ---------------------------------------------------------------------------
 # 入口
 # ---------------------------------------------------------------------------
 
+def _save_and_reload(name):
+    import tempfile
+    path = os.path.join(tempfile.mkdtemp(prefix="hipcheck_"), name).replace("\\", "/")
+    hou.hipFile.save(path)
+    hou.hipFile.load(path, suppress_save_prompt=True, ignore_load_warnings=True)
+    return path
+
+
+def test_hda_self_reference_not_kept():
+    """14. HDA（如 H21 的 Color SOP）内部引用自己参数，不算外部引用；存盘重开后也要判为没用分支。"""
+    geo = new_scene()
+    box = mk(geo, "box", "box1")
+    mk(geo, "null", "OUT_main", [box])
+    color = geo.createNode("color", "dead_color")  # 正常初始化，带 HDA 内部节点
+    color.setInput(0, box)
+    geo_path = geo.path()
+    _save_and_reload("hda_self_ref.hip")
+    geo = hou.node(geo_path)
+    geo.node("dead_color").cook(force=True)  # 让 HDA 内部引用关系生成（界面里打开工程时会自然发生）
+    assert_true(any(d.path().startswith(geo_path + "/dead_color/")
+                    for d in geo.node("dead_color").dependents()),
+                "前提不成立：Color SOP 内部没有引用自己")
+    result = scan.scan_layer(geo)
+    assert_equal(status_of(result, geo.path() + "/dead_color"), "unused_branch",
+                 "HDA 自引用被误当成外部引用")
+
+
+def test_check_false_positives():
+    """15. 锁住 HDA 的内部节点、出厂默认值的文件参数（scatter 的 default.pic）不报。"""
+    geo = new_scene()
+    box = mk(geo, "box", "box1")
+    sc = geo.createNode("scatter", "sc"); sc.setInput(0, box)
+    fc = geo.createNode("filecache::2.0", "fc"); fc.setInput(0, sc)
+    geo_path = geo.path()
+    _save_and_reload("check_fp.hip")
+    bad = [r for r in scan.check_hip()
+           if r["node_path"].startswith(geo_path + "/fc/")
+           or (r["node_path"] == geo_path + "/sc" and r["parm_name"] == "densitytexture")]
+    assert_equal(bad, [], "检查出现误报")
+
+
 TESTS = [
+    ("hda_self_reference_not_kept", test_hda_self_reference_not_kept),
+    ("check_false_positives", test_check_false_positives),
     ("trunk", test_trunk),
     ("floating_chain", test_floating_chain),
     ("unused_branch", test_unused_branch),
