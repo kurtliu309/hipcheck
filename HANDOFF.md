@@ -8,7 +8,10 @@ v1.0.0（2026-11-22）已实现：
 - `python/hipcheck/actions.py`：`highlight()`、`colorize()`、`restore_colors()`、`backup_then_delete()`。
 - `python/hipcheck/ui.py`：非模态单例弹窗，Qt 只从 `hutil.Qt` 导入。
 - `hipcheck.json`（Houdini package）+ `toolbar/hipcheck.shelf`（`hipcheck` shelf 工具）。
-- `tests/run_tests.py`：13 项 hython 测试，当前 `ALL PASS 13/13`。
+- `tests/run_tests.py`：13 项 hython 测试，当前 `ALL PASS 13/13`（Opus 复跑确认）。
+- 已安装到本机：`C:/Users/suzyz/houdini21.0/packages/hipcheck.json`（本机 pref 目录不在 Documents 下；packages 文件夹是新建的）。hython 里 `import hipcheck` 正常。
+- **等 Kurt 验收**：在 Houdini 界面里点弹窗看外观、跳转、高亮、上色、删除。网络编辑器的高亮/跳转在 hython 测不了，只核对过 API。
+- 已知可能慢的地方：引用检查对整个 hip 的每个字符串参数 × 当前层每个节点做匹配，超大工程可能要几秒以上，v1 没做进度条。
 
 ## 怎么装
 
