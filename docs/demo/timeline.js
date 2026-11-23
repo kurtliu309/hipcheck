@@ -191,7 +191,7 @@ export function createFilm(root, lang) {
   };
   let lastWhoosh = -9;
   const mv = (sel, pose, t, d = 1.6, ease = SM) => {
-    if (d >= 1.5 && Math.abs(t - lastWhoosh) > 0.6) { sfx(t + 0.05, "whoosh", 0.35); lastWhoosh = t; }
+    if (d >= 1.5 && Math.abs(t - lastWhoosh) > 0.6) { lastWhoosh = t; }
     return tl.to(sel, { ...pose, duration: d, ease }, t);
   };
 
@@ -325,7 +325,7 @@ export function createFilm(root, lang) {
   at(o + 31, [...clr(), ...KROWS.map((r) => C(r, "sel")), ...ND(DEAD, "sel")]);
   tl.to("#pc", { opacity: 1, duration: 0.3 }, o + 31.6); ptrFree("pc", 200, 250, o + 31.5, 0.01);
   e = ptrTo("pc", "b-del", o + 31.7); press("pc", e + 0.05, "b-del");
-  tl.to("#sheet", { yPercent: 0, duration: 0.7, ease: "expo.out" }, e + 0.15); sfx(e + 0.12, "swoosh_up", 0.45);
+  tl.to("#sheet", { yPercent: 0, duration: 0.7, ease: "expo.out" }, e + 0.15);
   e = ptrTo("pc", "s-ok", e + 0.75, 0.45); press("pc", e + 0.05, "s-ok");
   const del = e + 0.2;
   sfx(del + 0.08, "delete", 0.75);
@@ -372,7 +372,7 @@ export function createFilm(root, lang) {
   at(e + 0.1, [...clr(), C("k-float", "sel"), C("k-box1", "sel"), C("k-mountain1", "sel"), ...ND(["box1", "mountain1"], "sel")]);
   e = ptrTo("pc", "b-ign", e + 0.5); press("pc", e + 0.05, "b-ign");
   const ig = e + 0.15;
-  sfx(ig, "swoosh_up", 0.35); sfx(ig + 0.4, "blip2", 0.4);
+  sfx(ig + 0.4, "blip2", 0.4);
   tl.to("#k-float,#k-box1,#k-mountain1", { height: 0, marginBottom: 0, opacity: 0, duration: 0.5, ease: "power3.inOut", stagger: 0.05 }, ig);
   at(ig, [...clr(), ...ND(["box1", "mountain1"], "fl-float", false), TX("nk", "2")]);
   rise(["box1", "mountain1"], ig + 0.1, 0, 0.9);
