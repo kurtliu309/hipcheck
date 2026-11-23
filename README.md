@@ -26,25 +26,66 @@ Requires Houdini 21 (written to also run on 20.5).
 
 ## Install
 
-1. Put the whole `hipcheck` folder anywhere you like.
-2. Copy `hipcheck.json` into your Houdini user preferences `packages` folder
-   (create `packages` if it does not exist):
-   - Windows: `Documents/houdini21.0/packages`
-     (with OneDrive: `OneDrive/Documents/houdini21.0/packages`)
-   - Linux: `~/houdini21.0/packages`
-   - macOS: `~/Library/Preferences/houdini/21.0/packages`
-3. Open the copied `hipcheck.json` and change the one path to where you put the
-   folder, using forward slashes:
-   ```json
-   {"HIPCHECK": "D:/tools/hipcheck"}
-   ```
-4. Restart Houdini.
+hipcheck sets itself up from inside Houdini: you never edit a config file or
+hunt for your preferences folder.
+
+**1. Download and unzip.** Get `hipcheck-vX.Y.Z.zip` from
+[Releases](https://github.com/kurtliu309/hipcheck/releases/latest) and unzip it
+somewhere it can stay, for example `D:/tools/hipcheck`. Houdini loads the tool
+from this folder every time it starts, so do not leave it in a folder you clear out.
+
+**2. Open the Python Shell.** In Houdini's top menu choose
+**Windows → Python Shell** (or press **Alt+Shift+P**). A small window with a
+`>>>` prompt opens.
+
+<img src="docs/install/1-python-shell.png" alt="Windows menu with Python Shell highlighted" width="345">
+
+**3. Paste this line and press Enter.**
+
+```python
+p = hou.text.expandString(hou.ui.selectFile(title="Select install.py in the hipcheck folder", pattern="install.py")); p and exec(open(p, encoding="utf-8").read(), {"__file__": p})
+```
+
+<img src="docs/install/2-paste.png" alt="The install line pasted into the Python Shell" width="560">
+
+**4. Pick `install.py`.** A file browser opens. Go to the folder you unzipped
+(type its path into **Look in** and press Enter, or click through the folders),
+select `install.py` and click **Accept**.
+
+<img src="docs/install/3-pick-install.png" alt="Houdini file browser with install.py selected" width="560">
+
+**5. Done.** A message says hipcheck is installed. Click **OK**.
+
+<img src="docs/install/4-installed.png" alt="Message: hipcheck is installed" width="560">
+
+A **hipcheck** tab is now at the end of your shelf tabs. Click the **hipcheck**
+button on it to open the tool. No restart needed.
+
+<img src="docs/install/5-shelf.png" alt="The hipcheck shelf tab and button at the end of the shelf tabs" width="100%">
+
+What the installer does: it asks Houdini where your user preferences are (so a
+OneDrive or moved Documents folder, or `HOUDINI_USER_PREF_DIR`, just works),
+writes `packages/hipcheck.json` there pointing at your folder, loads it, and adds
+the hipcheck shelf tab.
+
+- **Moved the folder or got a new version?** Run steps 2–4 again from the new
+  folder, then restart Houdini.
+- **Uninstall:** delete `hipcheck.json` from the `packages` folder (the
+  installer's message shows the full path) and restart Houdini.
+
+<details><summary>Install by hand instead</summary>
+
+1. Copy `hipcheck.json` into the `packages` folder of your Houdini user
+   preferences (create it if needed), e.g. `Documents/houdini21.0/packages`.
+2. Change the one path in it to your folder, with forward slashes:
+   `{"HIPCHECK": "D:/tools/hipcheck"}`
+3. Restart Houdini, then on a shelf bar click `+` → **Shelves** → tick **hipcheck**.
+
+</details>
 
 ## Open
 
-1. On a shelf bar click `+` -> **Shelves** -> tick **hipcheck** (it is near the
-   bottom of the list). A `hipcheck` shelf tab appears; you only do this once.
-2. Click the **hipcheck** button on that tab.
+Click the **hipcheck** button on the hipcheck shelf tab.
 
 Optional hotkey: right-click the button -> **Edit Tool...** -> **Hotkeys**.
 

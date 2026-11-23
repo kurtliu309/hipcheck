@@ -95,7 +95,11 @@
   .steps{counter-reset:s;display:grid;gap:16px;padding:0;margin:0;list-style:none}
   .steps li{counter-increment:s;display:flex;gap:18px;align-items:flex-start;padding:20px 22px}
   .steps li::before{content:counter(s);flex:none;width:36px;height:36px;border-radius:10px;display:grid;place-items:center;font:800 18px "Inter Tight",sans-serif;background:linear-gradient(#ff7a3a,#d4521a);box-shadow:0 3px 0 #8a310e}
-  .steps li div{color:#c3c8d3}
+  .steps li div{color:#c3c8d3;min-width:0;flex:1}
+  .cmdbox{position:relative}
+  pre.cmd{white-space:pre-wrap;word-break:break-all;padding-right:76px}
+  .copy{position:absolute;top:8px;right:8px;font:600 12px "Inter",sans-serif;color:#fff;background:#ffffff1f;border:0;border-radius:7px;padding:6px 10px;cursor:pointer}
+  .copy:hover{background:#ffffff33}
   .steps b{color:#fff}
   pre{margin:10px 0 0;padding:12px 14px;border-radius:10px;background:#00000066;overflow-x:auto;font:500 13px/1.5 "JetBrains Mono",monospace;color:#e6e9f0}
 
@@ -127,7 +131,7 @@
 <header class="wrap">
   <h1 class="logo-big">hip<b>check</b></h1>
   <p class="tag"><span data-l="en">Broken paths and dead nodes. Found in one click.</span><span data-l="zh">坏路径和无用节点，一键找出。</span></p>
-  <p class="lead"><span data-l="en">A small Houdini tool that checks a scene for file paths that will break, and cleans up nodes that do nothing. Every change is one Ctrl+Z.</span><span data-l="zh">一个小巧的 Houdini 工具：检查场景里会坏掉的文件路径，清理什么也不做的节点。每次改动都能一步 Ctrl+Z 撤销。</span></p>
+  <p class="lead"><span data-l="en">A small Houdini tool that checks a scene for file paths that will break, and cleans up nodes that do nothing. Ctrl+Z undoes anything it changes.</span><span data-l="zh">一个小巧的 Houdini 工具：检查场景里会坏掉的文件路径，清理什么也不做的节点。它改过的东西都能 Ctrl+Z 撤回。</span></p>
   <div class="cta">
     <a class="btn o" href="https://github.com/kurtliu309/hipcheck/releases/latest"><span data-l="en">Download</span><span data-l="zh">下载</span></a>
     <a class="btn" href="https://github.com/kurtliu309/hipcheck"><span data-l="en">View on GitHub</span><span data-l="zh">在 GitHub 查看</span></a>
@@ -136,8 +140,8 @@
 </header>
 
 <section id="film"><div class="wrap">
-  <h2><span data-l="en">The film</span><span data-l="zh">产品片</span></h2>
-  <p class="sec-sub"><span data-l="en">Fifty seconds, every feature.</span><span data-l="zh">五十秒，看完全部功能。</span></p>
+  <h2><span data-l="en">See it work</span><span data-l="zh">看它怎么用</span></h2>
+  <p class="sec-sub"><span data-l="en">Every feature, start to finish.</span><span data-l="zh">从头到尾，全部功能。</span></p>
   <div class="slab film"><video id="video" controls playsinline preload="metadata" poster="assets/poster.jpg" src="assets/hipcheck-en.mp4"></video></div>
 </div></section>
 
@@ -157,7 +161,7 @@
 
 <section id="features"><div class="wrap">
   <h2><span data-l="en">What it does</span><span data-l="zh">它做什么</span></h2>
-  <p class="sec-sub"><span data-l="en">Two tabs. One window. Nothing changes until you say so.</span><span data-l="zh">两个标签页，一个窗口。你不点，它什么都不改。</span></p>
+  <p class="sec-sub"><span data-l="en">Find what is broken, clear what is dead. Nothing changes until you say so.</span><span data-l="zh">找出坏掉的，清掉没用的。你不点头，它什么都不改。</span></p>
   <div class="grid">
     <div class="slab card"><div class="ic"><svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></svg></div>
       <h3>Check</h3><p><span data-l="en">Input files that don't exist, and paths typed as <code>D:/</code> or <code>//server</code> instead of <code>$HIP</code> / <code>$JOB</code>. Scans the whole hip.</span><span data-l="zh">不存在的输入文件，以及写成 <code>D:/</code> 或 <code>//server</code>、而不是 <code>$HIP</code> / <code>$JOB</code> 的路径。扫描整个 hip。</span></p></div>
@@ -187,12 +191,12 @@
 
 <section id="install"><div class="wrap">
   <h2><span data-l="en">Install</span><span data-l="zh">安装</span></h2>
-  <p class="sec-sub"><span data-l="en">One folder and one JSON file. No build step.</span><span data-l="zh">一个文件夹加一个 JSON，不用编译。</span></p>
+  <p class="sec-sub"><span data-l="en">It sets itself up from inside Houdini. No config files, no restart.</span><span data-l="zh">在 Houdini 里自己装好。不用改配置文件，不用重启。</span></p>
   <ol class="steps">
-    <li class="slab"><div><span data-l="en"><b>Download</b> the latest release and put the <code>hipcheck</code> folder anywhere.</span><span data-l="zh"><b>下载</b>最新版本，把 <code>hipcheck</code> 文件夹放在任意位置。</span></div></li>
-    <li class="slab"><div><span data-l="en"><b>Copy</b> <code>hipcheck.json</code> into your Houdini <code>packages</code> folder, e.g. <code>Documents/houdini21.0/packages</code>.</span><span data-l="zh"><b>复制</b> <code>hipcheck.json</code> 到 Houdini 的 <code>packages</code> 文件夹，例如 <code>Documents/houdini21.0/packages</code>。</span></div></li>
-    <li class="slab"><div><span data-l="en"><b>Edit</b> the one path in it to where you put the folder:</span><span data-l="zh"><b>修改</b>里面唯一的路径，指向你放文件夹的位置：</span><pre>{"HIPCHECK": "D:/tools/hipcheck"}</pre></div></li>
-    <li class="slab"><div><span data-l="en"><b>Restart</b> Houdini, add the <b>hipcheck</b> shelf and click the button.</span><span data-l="zh"><b>重启</b> Houdini，添加 <b>hipcheck</b> 工具架，点按钮即可。</span></div></li>
+    <li class="slab"><div><span data-l="en"><b>Download</b> the <a href="https://github.com/kurtliu309/hipcheck/releases/latest">latest release</a> and unzip it somewhere it can stay, e.g. <code>D:/tools/hipcheck</code>.</span><span data-l="zh"><b>下载</b><a href="https://github.com/kurtliu309/hipcheck/releases/latest">最新版本</a>，解压到一个不会被清理的位置，例如 <code>D:/tools/hipcheck</code>。</span></div></li>
+    <li class="slab"><div><span data-l="en">In Houdini, open <b>Windows → Python Shell</b>.</span><span data-l="zh">在 Houdini 里打开 <b>Windows → Python Shell</b>。</span></div></li>
+    <li class="slab"><div><span data-l="en"><b>Paste</b> this line and press Enter:</span><span data-l="zh"><b>粘贴</b>这一行，按回车：</span><div class="cmdbox"><pre class="cmd" id="cmd">p = hou.text.expandString(hou.ui.selectFile(title="Select install.py in the hipcheck folder", pattern="install.py")); p and exec(open(p, encoding="utf-8").read(), {"__file__": p})</pre><button class="copy" id="copy" type="button"><span data-l="en">Copy</span><span data-l="zh">复制</span></button></div></div></li>
+    <li class="slab"><div><span data-l="en">In the file browser, pick <code>install.py</code> in the unzipped folder and click <b>Accept</b>. The <b>hipcheck</b> shelf tab appears; click the button.</span><span data-l="zh">在弹出的文件浏览器里选解压目录中的 <code>install.py</code>，点 <b>Accept</b>。工具架上会出现 <b>hipcheck</b> 标签，点按钮即可。</span></div></li>
   </ol>
 </div></section>
 
@@ -204,6 +208,12 @@
 <script type="module">
 import { MARKUP } from "./demo/markup.js";
 import { createFilm } from "./demo/timeline.js";
+
+document.getElementById("copy").addEventListener("click", async (e) => {
+  const b = e.currentTarget, html = b.innerHTML;
+  try { await navigator.clipboard.writeText(document.getElementById("cmd").textContent); b.textContent = "✓"; } catch (err) { b.textContent = "Ctrl+C"; }
+  setTimeout(() => (b.innerHTML = html), 1500);
+});
 
 const SPEED = 1.2;
 const CH = { intro: ["Intro", "开场"], kOpen: ["Open", "打开"], kCheck: ["Check", "Check"], kClean: ["Clean", "Clean"], kJump: ["Jump", "跳转"], kDelete: ["Delete", "删除"], kIgnore: ["Ignore", "忽略"], kKeep: ["Keep", "保留"] };

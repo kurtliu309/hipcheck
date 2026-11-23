@@ -46,10 +46,10 @@ export const MARKUP = `
   <div class="logo" id="logo"></div>
   <div class="tagl" id="tag1" data-i18n="t1"></div>
   <div class="facts" id="facts">
-    <div><b>Houdini 21</b><span data-i18n="o1"></span></div>
+    <div><b data-i18n="o1h"></b><span data-i18n="o1"></span></div>
     <div><b data-i18n="o2h"></b><span data-i18n="o2"></span></div>
-    <div><b>Ctrl+Z</b><span data-i18n="o3"></span></div>
-    <div><b>21 / 21</b><span data-i18n="o4"></span></div>
+    <div><b data-i18n="o3h"></b><span data-i18n="o3"></span></div>
+    <div><b data-i18n="o4h"></b><span data-i18n="o4"></span></div>
   </div>
   <div id="capw"><div id="capb"><div id="ck"></div><div id="cs"></div></div></div>
   <div class="scn" id="scn"></div>

@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.3.2
+
+- `install.py`: one-step install from Houdini's Python Shell. It asks Houdini for its
+  user preference folder, writes `packages/hipcheck.json` pointing at the unzipped
+  folder, loads the package and adds the hipcheck shelf tab. No restart, no config
+  editing. Manual install is still documented.
+- README and project page: install steps rewritten around the installer, with
+  screenshots (`docs/install/`).
+- Project page: clearer section titles; film end card lists what the tool does.
+
 ## Project page (no code change)
 
 - `docs/`: GitHub Pages site with the product film and a live, scrubbable demo;
