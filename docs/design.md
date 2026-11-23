@@ -7,8 +7,7 @@ Agreed with Kurt on 2026-11-22. Standalone tool, does not depend on kpipe.
 - Python running inside Houdini. Target Houdini 21.0 (21.0.512 on this machine),
   written to stay compatible with 20.5: Qt is always imported through
   `hutil.Qt`, never PySide2/PySide6 directly.
-- Location: the whole hipcheck folder can live anywhere (on this machine
-  `D:/Kurt/Houdini/tools/hipcheck`).
+- Location: the whole hipcheck folder can live anywhere.
 - Install: only one file goes into Houdini — copy `hipcheck.json` into
   `$HOUDINI_USER_PREF_DIR/packages` and change the single path in the file (the
   value of `HIPCHECK`) to the real folder location, then restart Houdini. The

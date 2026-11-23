@@ -1,3 +1,14 @@
+<p align="center"><a href="https://kurtliu309.github.io/hipcheck/"><img src="docs/assets/banner.jpg" alt="hipcheck" width="100%"></a></p>
+
+<p align="center">
+  <b>Broken paths and dead nodes. Found in one click.</b><br>
+  <a href="https://kurtliu309.github.io/hipcheck/">Project page &amp; live demo</a> ·
+  <a href="https://github.com/kurtliu309/hipcheck/releases/latest">Download</a> ·
+  <a href="docs/assets/hipcheck-en.mp4">Watch the film (50 s)</a>
+</p>
+
+<p align="center"><img src="docs/assets/preview.gif" alt="Clicking rows in hipcheck frames each node in the network" width="640"></p>
+
 # hipcheck
 
 A small Houdini tool that checks a scene for path problems and cleans up nodes
@@ -129,3 +140,7 @@ hython tests/run_tests.py
 ```
 
 The last line reads `ALL PASS n/n` or `FAIL k/n`.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

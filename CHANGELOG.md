@@ -1,5 +1,13 @@
 # Changelog
 
+## Project page (no code change)
+
+- `docs/`: GitHub Pages site with the product film and a live, scrubbable demo;
+  English and Chinese on one page.
+- README: banner, preview and links to the site and film.
+- MIT license. `hipcheck.json` ships with a placeholder path; the example scene
+  script reads `$HIPCHECK` instead of a fixed path.
+
 ## 1.3.1
 
 - UI: Unused branch starts expanded (its chains collapsed); Floating stays

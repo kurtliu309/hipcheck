@@ -6,6 +6,7 @@ Houdini scene check and clean-up tool (independent of kpipe).
   version history in `CHANGELOG.md`.
 - Rules: keep `HANDOFF.md` up to date after every change; add a `CHANGELOG.md`
   entry for every release and keep `docs/design.md` in sync.
-- All tracked files are English; only git-ignored files may be Chinese.
+- All tracked files are English; only git-ignored files may be Chinese. Exception: the
+  project page under `docs/` (index.html and docs/demo/) is bilingual, English by default.
 - Tests: `"D:/Program Files/Side Effects Software/Houdini 21.0.512/bin/hython.exe" tests/run_tests.py`,
   check the last line.

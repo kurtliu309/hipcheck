@@ -2,7 +2,7 @@
 # (for a visual acceptance test in the UI).
 import os, hou
 
-ROOT = "D:/Kurt/Houdini/tools/hipcheck"
+ROOT = os.environ["HIPCHECK"]  # set by the hipcheck package
 
 geo = hou.node("/obj").createNode("geo", "example_geo")
 for c in geo.children():
